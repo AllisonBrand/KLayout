@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<klayout-macro>
+ <description/>
+ <version/>
+ <category>pymacros</category>
+ <prolog/>
+ <epilog/>
+ <doc/>
+ <autorun>false</autorun>
+ <autorun-early>false</autorun-early>
+ <priority>0</priority>
+ <shortcut/>
+ <show-in-menu>false</show-in-menu>
+ <group-name/>
+ <menu-path/>
+ <interpreter>python</interpreter>
+ <dsl-interpreter-name/>
+ <text>import pya
+
+'''
+Debugging
+'''
+
+# Check library exists
+lib = pya.Library.library_by_name("MyLib")
+print(f"Library: {lib}")
+
+# Check PCell is registered
+if lib:
+    pcell_decl = lib.layout().pcell_declaration("RightTriangle")
+    print(f"PCell declaration: {pcell_decl}")
+    
+    # Check parameters
+    if pcell_decl:
+        for i in range(pcell_decl.get_param_count()):
+            pinfo = pcell_decl.get_param_info(i)
+            print(f"Param {i}: {pinfo.name} = {pinfo.default}")</text>
+</klayout-macro>

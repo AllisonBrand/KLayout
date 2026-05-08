@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<klayout-macro>
+ <description/>
+ <version/>
+ <category>pymacros</category>
+ <prolog/>
+ <epilog/>
+ <doc/>
+ <autorun>true</autorun>
+ <autorun-early>false</autorun-early>
+ <priority>0</priority>
+ <shortcut/>
+ <show-in-menu>false</show-in-menu>
+ <group-name/>
+ <menu-path/>
+ <interpreter>python</interpreter>
+ <dsl-interpreter-name/>
+ <text>import pya
+import importlib
+import sys
+import traceback
+
+from dev_reload import reload_modules
+from ParamSweep import custom_sweep_pcell
+
+
+
+# Configuration
+LIB_NAME = "MyLib"
+PCELLS = {
+# 'python module name' : 'pcell class name'
+  'HEMT': 'HEMT',
+  'parr_text': 'ParrText',
+  'HEMT_Array': 'HEMT_Array'
+}
+OTHER_MODULES = ['ParamSweep']
+
+class MyLib(pya.Library):
+    def __init__(self):
+        try:
+          self.description = "My First Library"
+          
+          # Remove old library
+          old_lib = pya.Library.library_by_name(LIB_NAME)
+          if old_lib:
+              old_lib.delete()
+              print(f"Deleted old library: {LIB_NAME}")
+          
+          # Reload the python modules for each PCell
+          py_modules = reload_modules(PCELLS.keys())
+          # Reload other python module dependencies:
+          reload_modules(OTHER_MODULES)
+          
+          # Register the pcells with MyLib
+          for module_name, pcell_name in PCELLS.items():
+              cls = getattr(py_modules[module_name], pcell_name)
+              self.layout().register_pcell(pcell_name, cls()) 
+          
+          self.register(LIB_NAME) # If a library with that name already existed, it will be replaced now.
+        except Exception as e:
+          print(f'{LIB_NAME} __init__ error: \n{traceback.format_exc()}') 
+
+
+# Recreate library
+lib = MyLib()
+pcells = list(PCELLS.keys())
+
+# Use wrapper PCell ParamSweep:
+try: 
+  sweep_HEMT_Array = custom_sweep_pcell('HEMT_Array', LIB_NAME)
+  print('Attempting to register HEMT_ParamSweep with MyLib:')
+  lib.layout().register_pcell('HEMT_Array_ParamSweep', sweep_HEMT_Array())
+  pcells.extend(["HEMT_Array_ParamSweep"])
+except Exception as e:
+  print(f'custom_sweep_pcell error: \n{traceback.format_exc()}')
+
+
+print(f'{LIB_NAME} loaded with PCells: {pcells}')
+    
+# from HEMT import HEMT
+# from RightTriangle import RightTriangle
+# from pcell_sample_python import Circle
+    </text>
+</klayout-macro>
