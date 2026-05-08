@@ -1,0 +1,10 @@
+# 1. Ignore everything
+/*
+
+# 2. Re-include the two specific directories
+!/python/
+!/pymacros/
+
+# 3. Re-include the .gitignore file itself (optional but recommended)
+!.gitignore
+!.gitattributes
