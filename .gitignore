@@ -5,6 +5,9 @@
 !/python/
 !/pymacros/
 
+# Except for 
+python/__pycache__
+
 # 3. Re-include the .gitignore file itself (optional but recommended)
 !.gitignore
 !.gitattributes

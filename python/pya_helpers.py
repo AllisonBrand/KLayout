@@ -272,6 +272,31 @@ def get_converter(param_type):
                       "in get_converter(param_type).")
         return lambda s: s
 
+def is_valid_param_type(type_code:int):
+    '''Returns True if the type_code is a valid type for a Klayout PCell parameter, False otherwise.
+    
+    Valid type codes are pya.PCellParameterDeclaration.TypeInt, pya.PCellParameterDeclaration.TypeDouble,
+    pya.PCellParameterDeclaration.TypeString, pya.PCellParameterDeclaration.TypeLayer, etc.
+    '''
+    
+    return type_code in PARAM_TYPES.keys()
+
+def is_numeric_param_type(type_code:int):
+    '''Return True if the type_code is pya.PCellParameterDeclaration.TypeDouble or pya.PCellParameterDeclaration.TypeInt'''
+    return PARAM_TYPES.get(type_code) in ('int', 'double')
+
+# {pya param type code: string type name}
+PARAM_TYPES = {pya.PCellParameterDeclaration.TypeInt: 'int', 
+               pya.PCellParameterDeclaration.TypeDouble: 'double',
+               pya.PCellParameterDeclaration.TypeString: 'string', 
+               pya.PCellParameterDeclaration.TypeLayer: 'LayerInfo', 
+               pya.PCellParameterDeclaration.TypeBoolean: 'bool', 
+               pya.PCellParameterDeclaration.TypeCallback: 'Callback', 
+               pya.PCellParameterDeclaration.TypeList: 'list', 
+               pya.PCellParameterDeclaration.TypeNone: 'None', 
+               pya.PCellParameterDeclaration.TypeShape: 'Shape'}
+
+
 if __name__ == '__main__':
     # Allows me to get around Klayout's caching behavior during development by reloading this module when I run it, 
     # so that I can test edits to this module without needing to restart Klayout.

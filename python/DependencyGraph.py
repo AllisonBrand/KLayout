@@ -1,5 +1,5 @@
 # Written by Claude-4-5-Sonnet
-# I just read it over, made minor edits and added comments
+# I just read every line, made minor edits and added comments
 
 from collections import deque
 
@@ -41,8 +41,14 @@ class DependencyGraph:
                     return True
         return False
     
-    def topological_sort(self):
-        """Return nodes in evaluation order"""
+    def topological_sort(self, fail_if_cycle=True):
+        """Return nodes in evaluation order.
+        
+        If fail_if_cycle is True, raise ValueError on detection of a cycle.
+        
+        If fail_if_cycle is False, then returns (eval_order, cycle), where cycle is a subgraph containing the 
+        cycle as a dict of {node: [dependencies]}. Will be an empty {} if no cycle is found. """
+        
         # Counts of incoming edges (dependencies) for each node
         in_degree = {node: len(self.graph[node]) for node in self.graph}
         
@@ -54,11 +60,11 @@ class DependencyGraph:
         
         # Kahn's algorithm (Breadth-First-Search)
         queue = deque([node for node, degree in in_degree.items() if degree == 0]) # Stores nodes with zero unresolved dependencies
-        result = [] # Stores nodes in an order in which they can be evaluated.
+        eval_order = [] # Stores nodes in an order in which they can be evaluated.
         
         while queue: 
             node = queue.popleft() # O(1)
-            result.append(node) # Resolve node
+            eval_order.append(node) # Resolve node
             
             for dependent in self.graph:
                 if node in self.graph[dependent]:
@@ -68,7 +74,54 @@ class DependencyGraph:
                     if in_degree[dependent] == 0: # All dependencies have been cleared.
                         queue.append(dependent) # O(1)
         
-        if len(result) != len(in_degree):
-            raise ValueError("Cycle detected")
+        if fail_if_cycle:
+
+            if len(eval_order) != len(in_degree):
+                # There is a cycle!
+                raise ValueError('Cycle Detected!')
+            
+            return eval_order
         
-        return result
+        else:
+            
+            cycle = {}
+            if len(eval_order) != len(in_degree):
+                # There is a cycle!
+                cycle = {k: self.graph[k] for k in (in_degree.keys() - set(eval_order))}
+            
+        return eval_order, cycle
+    
+    def kahn_algorithm(self):
+        '''Kahn's algorithm (Breadth-First-Search)
+        Returns a list of nodes in evaluation order, and a cycle subgraph, if found.
+        If no cycle is found, cycle is an empty {}'''
+        # Counts of incoming edges (dependencies) for each node
+        in_degree = {node: len(self.graph[node]) for node in self.graph}
+        
+        # Add dependencies that aren't in graph as keys (these have zero of their own dependencies)
+        for node in self.graph:
+            for dep in self.graph[node]:
+                if dep not in in_degree:
+                    in_degree[dep] = 0
+        
+        # Kahn's algorithm (Breadth-First-Search)
+        queue = deque([node for node, degree in in_degree.items() if degree == 0]) # Stores nodes with zero unresolved dependencies
+        eval_order = [] # Stores nodes in an order in which they can be evaluated.
+        
+        while queue: 
+            node = queue.popleft() # O(1)
+            eval_order.append(node) # Resolve node
+            
+            for dependent in self.graph:
+                if node in self.graph[dependent]:
+                    # Decrement dependency count for each *dependent* node that depended on the resolved *node*
+                    in_degree[dependent] -= 1
+                    # Check, was *node* the last dependency of *dependent*?
+                    if in_degree[dependent] == 0: # All dependencies have been cleared.
+                        queue.append(dependent) # O(1)
+        
+        if len(eval_order) != len(in_degree):
+            # There is a cycle!
+            pass
+            
+        return eval_order, cycle
