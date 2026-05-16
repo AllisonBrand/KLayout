@@ -3,7 +3,7 @@ import numpy as np
 def parse_range(range_str:str, dtype=float):
     '''Parse range_str into a np.ndarray of values.
     
--   range_str: "start:stop", or "start:stop:step", with start and stop inclusive.
+-   range_str: "start:stop", or "start:stop:step", with stop exclusive.
 -   dtype: float or int
     '''
     # Parse range_str into start, stop, step
@@ -30,11 +30,11 @@ def parse_range(range_str:str, dtype=float):
         stop = dtype(stop)
         step = dtype(step)
     except ValueError as e:
-        e.add_note(f'Could not parse {range_str} as a numeric range.')
+        e.add_note(f'Could not parse {range_str} as a {dtype} range.')
         raise
     
     # Return np.ndarray holding the range:
-    return np.arange(start, stop + step, step, dtype=dtype)
+    return np.arange(start, stop, step, dtype=dtype)
 
 class UserInputError(ValueError):
     '''Accepts annotated_input, an annotated copy of the offending user input,

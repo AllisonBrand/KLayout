@@ -91,6 +91,8 @@ class HEMT(pya.PCellDeclarationHelper):
       sep_GD = self.sep_GD / self.layout.dbu
       sep_SG = self.sep_SG / self.layout.dbu
       gate_len = self.gate_len / self.layout.dbu
+      # DEBUG:
+      print(f'\nHEMT: width has type {type(self.width)} and value {self.width!r}\n')
       width = self.width / self.layout.dbu
       pad_size = self.pad_size / self.layout.dbu
       border = self.border / self.layout.dbu

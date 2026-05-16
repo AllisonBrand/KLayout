@@ -226,7 +226,7 @@ def get_converter(param_type):
     pya.PCellParameterDeclaration.TypeString, pya.PCellParameterDeclaration.TypeLayer, etc.'''
     # Int
     if param_type == pya.PCellParameterDeclaration.TypeInt:
-        return int
+        return lambda s: int(float(s)//1) # Robust even on '1.0'
     # Double
     elif param_type == pya.PCellParameterDeclaration.TypeDouble:
         return float
@@ -239,20 +239,27 @@ def get_converter(param_type):
     # Boolean
     elif param_type == pya.PCellParameterDeclaration.TypeBoolean:
         
-        def str_to_bool(string):
-            if string.lower() in ('true', '1', 'yes'):
-                return True
-            elif string.lower() in ('false', '0', 'no'):
-                return False
+        def to_bool(input):
+            if isinstance(input, str):
+                if input.lower() in ('true', '1', 'yes'):
+                    return True
+                elif input.lower() in ('false', '0', 'no'):
+                    return False
+                else:
+                    raise ValueError(f"Invalid boolean value: '{input}'. Expected True/False, 1/0, yes/no, case-insensitive.")
             else:
-                raise ValueError(f"Invalid boolean value: '{string}'. Expected True/False, 1/0, yes/no, case-insensitive.")
+                return bool(input)
             
-        return str_to_bool
+        return to_bool
     # Layer
     elif param_type == pya.PCellParameterDeclaration.TypeLayer:
         
         def str_to_LayerInfo(string):
             '''Expecting format "layer_num/datatype_num", e.g. "1/0"'''
+            # Check in case it was already pya.LayerInfo:
+            if isinstance(string, pya.LayerInfo): return string
+            
+            # Convert string specification to LayerInfo
             parts = string.split('/')
             if len(parts) != 2:
                 raise ValueError(f"Invalid layer format: '{string}'. Expected 'layer_num/datatype_num'.")
@@ -267,9 +274,8 @@ def get_converter(param_type):
         return str_to_LayerInfo
         
     else: # For complex types, return as-is and hope for the best
-        warnings.warn("Unclear how to convert a string to type specified by " +
-                     f"pya.PCellParameterDeclaration' type code {param_type}, " +
-                      "in get_converter(param_type).")
+        warnings.warn(f"Unclear how to convert a string to type {PARAM_TYPES[param_type]} "
+                      f"in get_converter(param_type).")
         return lambda s: s
 
 def is_valid_param_type(type_code:int):

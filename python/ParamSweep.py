@@ -5,10 +5,11 @@ import ast
 import operator
 import re
 import numpy as np
+import warnings
 # from string.templatelib import Interpolation, Template
 
 
-from pya_helpers import create_text, get_bbox_point, get_converter, is_valid_param_type, is_numeric_param_type
+from pya_helpers import create_text, get_bbox_point, get_converter, is_valid_param_type, is_numeric_param_type, PARAM_TYPES
 from general_helpers import parse_range, UserInputError
 from DependencyGraph import DependencyGraph
     
@@ -54,6 +55,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 # Each value should be stored in a np.ndarry whose shape indicates wheter it is a row sweep, col sweep, matrix, or scalar:
                 self.evaluated_params = {} # {param_name: value(s)_evaluated_in_the_correct_type}, values stored as np.ndarray
                 self._expr_param_types = {} # {param_name: required type code} for params whose values may be given as expressions
+                self.literal_params = {} # {param_name: scalar values}
                 self.row_param_name = '' # will hold param_name that row sweep is defined with
                 self.col_param_name = '' # will hold param_name that _col_sweep is defined with
                 self._dependency_graph = DependencyGraph() # tracks which params depend on which
@@ -104,24 +106,29 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 #    by defining a parameter with the same attributes in this wrapper PCell.
                 
                 for param_decl in pcell_decl.get_parameters():
-                    # To allow expressions for numerical parameter values, the input type accepted must be changed to TypeString
-                    if is_numeric_param_type(param_decl.type):
-                        
-                        type_code = self.TypeString
-                        # Store this param's name in a list of parameters which will need evaluating.
-                        self._expr_param_types[param_decl.name] = param_decl.type
-                    else: 
-                        type_code = param_decl.type
                     
                     # If we were able to get actual parameter values from an existing cell instance in the layout, 
                     # use those as the defaults in the wrapper PCell, so that the initial generated layout will match the existing cell instance. If not, just use the default values from the underlying PCell.
                     if param_values:
                         param_decl.default = param_values.get(param_decl.name) 
+                        
+                    # Allow for expressions for numerical parameters that are not set with a drop down menu:
+                    # - the input type and default value must be changed to TypeString
+                    has_drop_down = len(param_decl.choice_values()) > 0
+                    type_code = param_decl.type
+                    default = None
+                    if is_numeric_param_type(param_decl.type) and not has_drop_down:
+                        type_code = self.TypeString
+                        default = str(param_decl.default)
+                        # Store this param's name in a list of parameters which will need evaluating.
+                        self._expr_param_types[param_decl.name] = param_decl.type
+                    
                     
                     # Copy parameter to this wrapper PCell
-                    self.__copy_param(param_decl, type_code=type_code)  # also adds parameter declaration to self.src_params
+                    self.__copy_param(param_decl, default=default, type_code=type_code)  # also adds parameter declaration to self.src_params
                     
                 print(f"Copied parameters into '{source_pcell_name}_ParamSweep wrapper: {list(self.src_params.keys())}")   
+                print(f'{self._expr_param_types=}')
                 
                 # Messaging the user
                 self.param("_msg", self.TypeString, "Messages:", default="", readonly=True) # For errors and warnings
@@ -132,7 +139,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
         
         # TODO: Warnings if 
         # -  Label _format_str references scalar paramters.
-        # - Note that a non-TypeString param is being overridden by sweep.
         
         def coerce_parameters_impl(self):
             """
@@ -140,14 +146,19 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             """
             # TODO: Finish implementing error messages to the user for bad input in GUI window?
             print(f'Called {source_pcell_name}_ParamSweep.coerce_parameters_impl()')
-            # clear whenever restarting from coerce_parameters_imp:
+           
+            # Clear whenever restarting from coerce_parameters_imp:
+            self.evaluated_params = {}
             self.__errors = [] # Collect errors and warnings
             self.__warnings = []
+            self._msg = ''
             
             try:
-       
                 # Parse the row and column sweep specifications into {param_name: [values]}
                 self.parse_and_validate_sweeps()
+                
+                # Store literal params for convenient identification and access:
+                self.literal_params = {p: getattr(self, p) for p in (self.src_params.keys() - self.expr_param_names())}
                 
                 # Evaluate expression parameters
                 self.eval_params()
@@ -158,94 +169,123 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
 
             except Exception as e:
                 self.__errors.append(e)
-                 
-            # Show any errors and warnings accumulated during the function calls:
-            if self.__errors:
-                # Print all errors to the console
-                for err in self.__errors:
-                    print(f"Error in {source_pcell_name}_ParamSweep coerce_parameters_impl:")
-                    traceback.print_exception(err)
-                
-                # Add the errors to self._msg, so the user can see them in the GUI
-                self._msg = 'ERRORS:\n  • ' + \
-                            '\n  • '.join(map(str, self._errors)) + '\n'
             
-            # Add any warnings to self._msg, so the user can see them in the GUI             
-            if self.__warnings:
-                self._msg += 'Warnings:\n  • ' + \
-                            '\n  • '.join(self.__warnings)
+            try:     
+                # Show any errors and warnings accumulated during the function calls:
+                if self.__errors:
+                    # Print all errors to the console
+                    for err in self.__errors:
+                        print(f"Error in {source_pcell_name}_ParamSweep coerce_parameters_impl:")
+                        traceback.print_exception(err)
+                    
+                    # Add the errors to self._msg, so the user can see them in the GUI
+                    self._msg = 'ERRORS:\n  • ' + \
+                                '\n  • '.join(map(str, self.__errors)) + '\n'
+                
+                # Add any warnings to self._msg, so the user can see them in the GUI             
+                if self.__warnings:
+                    self._msg += 'Warnings:\n  • ' + \
+                                '\n  • '.join(self.__warnings)
+            
+            except Exception as e:
+                print(f"Error in {source_pcell_name}_ParamSweep coerce_parameters_impl, when trying to print other errors:")
+                traceback.print_exception(e)
                 
         def parse_and_validate_sweeps(self):
             '''Parse the row and column sweep specifications into param_name and values.
             
             Update self.row_param_name, self.col_param_name, self.evaluated_params, self.n_rows, and self.n_cols accordingly
             Store descriptive errors on failure in self.__errors, and store warnings in self.__warnings.'''
-            # Reset:
+            # Reset. Store previously swept param names:
+            prev_row_param, prev_col_param = self.row_param_name, self.col_param_name
             self.row_param_name = self.col_param_name = ''
             self.n_rows = self.n_cols = 1
             
             # Row Sweep
             if self._row_sweep:
-                try:
+                try: 
+                    # Try to parse 
                     param_name, values = self._parse_sweep(self._row_sweep) # Performs validation and parsing
-                    print(f'Parsed row sweep: {param_name} = ', values)
+                    
                 except UserInputError as e:
                     # Failed to parse:
                     self._row_sweep = e.annotated_input # Annotate row sweep with hints to the user
                     self.__errors.append(e)
                     self.n_rows = 0
+                    
                 else:
                     # Successful parse!
                     self.row_param_name = param_name
                     self.n_rows = len(values)
+                    print(f'Parsed row sweep: {param_name} = ', values)
+                    # Clear up any left over annotations:
+                    self._row_sweep = re.sub('[?!]{2,}', '', self._row_sweep)
                     # Store parsed result with shape (n_rows, 1 column) to indicate it's a row sweep:
                     self.evaluated_params[param_name] = np.array(values)[:, np.newaxis] 
-            
+                    print(f'self.evaluated_params[{param_name}] = {np.array(values)[:, np.newaxis]}')
+                    
             # Col Sweep
             if self._col_sweep:
                 try:
+                    # Try to parse 
                     param_name, values = self._parse_sweep(self._col_sweep) # Performs validation and parsing
-                    print(f'Parsed col sweep: {param_name} = ', values)
+                    
                 except UserInputError as e:
                     # Failed to parse:
                     self._col_sweep = e.annotated_input # Annotate col sweep with hints to the user
                     self.__errors.append(e)
                     self.n_cols = 0
+                    
                 else: 
                     # Successful parse!
                     self.col_param_name = param_name
                     self.n_cols = len(values)
+                    print(f'Parsed col sweep: {param_name} = ', values)
+                    # Clear up any left over annotations:
+                    self._col_sweep = re.sub('[?!]{2,}', '', self._col_sweep)
                     # Store parsed result with shape (1 row, n_cols) to indicate it's a col sweep:
                     self.evaluated_params[param_name] = np.array(values)[np.newaxis, :] 
+                    print(f'self.evaluated_params[{param_name}] = {np.array(values)[:, np.newaxis]}')
+
                         
             # Check, because you can't control the same parameter through both row and column sweep:
-            if self.row_param_name == self.col_param_name:
+            if self.row_param_name and self.row_param_name == self.col_param_name:
                 # Annotate both _row_sweep and _col_sweep with hints to the user
-                self._col_sweep = self._col_sweep.replace(param_name, f'{param_name}!!')
-                self._row_sweep = self._row_sweep.replace(param_name, f'{param_name}!!')
-                self.__errors.append(ValueError(f"Parameter '{param_name}' cannot be swept over in both row and column sweeps."))
+                self._col_sweep = self._col_sweep.replace(self.col_param_name, f'{self.col_param_name}!!')
+                self._row_sweep = self._row_sweep.replace(self.row_param_name, f'{self.row_param_name}!!')
+                self.__errors.append(ValueError(f"Parameter '{self.col_param_name}' cannot be swept over in both row and column sweeps."))
                 self.n_rows = self.n_cols = 0
                 return
             
-            # Update GUI: 
+            # Update GUI on successful parse. 
             # Add hints to the user indicating when parameter(s) in the underlying 
             # PCell section of GUI are being controlled by row and col sweep.
-            if self.n_rows > 1:
+            if self.row_param_name:
                 # A parameter is controlled through the row sweep.
                 # Make it say that in the GUI if possible.
-                if isinstance(self.getattr(self.row_param_name), str): # It's a string, so it can be replaced with a message:
-                    self.setattr(self.row_param_name, 'Set by Row Sweep.')
+                if isinstance(getattr(self, self.row_param_name), str): # It's a string, so it can be replaced with a message:
+                    setattr(self, self.row_param_name, 'Set by Row Sweep.')
                 else: # It's not TypeString, so the value will have to be left and ignored
                     self.__warnings.append(f'Note: {self.row_param_name} is overridden by row sweep.')
            
-            if self.n_cols > 1:
+            if self.col_param_name:
                 # A parameter is controlled through the col sweep.
                 # Make it say that in the GUI if possible.
-                if isinstance(self.getattr(self.col_param_name), str): # It's a string, so it can be replaced with a message:
-                    self.setattr(self.col_param_name, 'Set by Col Sweep.')
+                if isinstance(getattr(self, self.col_param_name), str): # It's a string, so it can be replaced with a message:
+                    setattr(self, self.col_param_name, 'Set by Col Sweep.')
                 else: # It's not TypeString, so the value will have to be left and ignored
                     self.__warnings.append(f'Note: {self.col_param_name} is overridden by col sweep.')
-   
+                    
+            # If a sweep no longer controls a given parameter, that parameter needs to set with 
+            # a fixed value again (instead of "Set by ___ Sweep"). Use the default.
+            for prev, new in ((prev_row_param, self.row_param_name), (prev_col_param, self.col_param_name)):
+                if not prev:
+                    continue
+                prev_was_string = isinstance(getattr(self, prev), str)
+                changed_sweep = prev != new
+                if changed_sweep and prev_was_string:
+                    setattr(self, prev, str(self.src_params[prev].default))
+
         def validate_label_fstring(self):
             '''
             Check if the label _format_str references valid parameters 
@@ -257,22 +297,64 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 raise ValueError(f"Label format string references parameters that are not in the underlying PCell: {validator.missing_keys}. " +
                                     f"Invalid names are marked with '??' in the label text.")
 
+        def expr_param_names(self, search=False):
+            '''Getter for the names of parameters which need to be evaluated as expressions.
+            Swept parameters are excluded, as they are already controlled by row or col sweep.
+            
+            If *search*: check the src PCell params for any expression params that are 
+            missing from either self._expr_param_types. If a param holds a value of type str,
+            and the required type is a string, add it to self._expr_param_types and 
+            this function's return value. This allows a param from the underlying PCelll 
+            to be added to the dict of expression params just by declaring it as 
+            TypeString in the ParamSweep.
+            '''
+            # Optional search: allows a param from the underlying PCelll 
+            # to be added to the dict of expression params just by declaring it 
+            # as TypeString in the ParamSweep
+            if search: 
+                # params expected to be literal:
+                literal_params = self.src_params.keys() - self._expr_param_types.keys()
+                for param_name in literal_params:
+                    required_type = self.src_params[param_name].type
+                    current_value = getattr(self, param_name)
+                    # If there is a string value for this param, and the required type is not TypeString,
+                    # it must be meant as an expression param.
+                    if current_value and required_type is not self.TypeString and isinstance(current_value, str):
+                        # This param is actually an expression param!
+                        print(f'Warning: {param_name} is being implicitly interpreted as an expression, to type {PARAM_TYPES[required_type]}')
+                        print(f'{repr(getattr(self, param_name))=}')
+                        self._expr_param_types[param_name] = required_type
+            
+            # Params to evaluate (don't let the swept parameters be overwritten):
+            #                  _expr_param_types.keys() includes all parameters that may be given as expressions
+            expr_params = self._expr_param_types.keys() - {self.row_param_name, self.col_param_name}
+            print(f'{expr_params=}')
+            return expr_params
+        
         def eval_params(self):
             '''Evaluate expression parameters.
             
             Validate syntax.
             Parse expressions into dependencies
             Determine evaluation order, check that it is acyclic.
-            Fill in self.evaluated_params
+            Fill in self.evaluated_params.
+            
+            Any errors are added to self.__errors
             '''
             # Reset dependency graph
             self._dependency_graph = DependencyGraph()
-            # Params to evaluate (don't let the swept parameters be overwritten):
-            #                  _expr_param_types.keys() includes all parameters that may be given as expressions
-            expr_params = self._expr_param_types.keys() - set(self.row_param_name, self.col_param_name)
+            # Params to evaluate 
+            expr_params = self.expr_param_names()
             
             # Identify dependencies
             for param_name in expr_params:
+                # Expression params must be string type!
+                if not isinstance(getattr(self, param_name), str):
+                    raise RuntimeError(f'{param_name} is expected to be a string type expression, '
+                          f'but received {type(getattr(self, param_name))} instead: '
+                          f'{repr(getattr(self, param_name))}'
+                         )
+                    
                 expr = self.get_expr(param_name)
                 deps = self._parse_expr_dependencies(expr)
                 self._dependency_graph.add_dependency(param_name, deps)
@@ -284,39 +366,50 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             if cycle:
                 # Message the user with annotations and errors,
                 # but still go on to evaluate the other parameters
-                self.__errors.append('Cyclic dependencies found among params!'
-                                     'Check the expressions:\n'
-                                     '\n'.join([f'{p} depends on: {', '.join(deps)}' 
-                                               for p, deps in cycle.items()]))
+                self.__errors.append(ValueError(
+                    'Cyclic dependencies found among params! Check the expressions:\n'
+                    '\n'.join([f"{p} depends on: {', '.join(deps)}" \
+                              for p, deps in cycle.items()])))
                 # Annotate each param that's part of a cycle:
                 for p in cycle.keys(): # Show "Cyclic Dependency" as the result, annotating the user's input box
                     setattr(self, p, f'{self.get_expr(param_name)} = Cyclic Dependency Detected!!')
                 
             
             # Evaluate parameters.
-            for param_name in eval_order:
+            for name in eval_order:
+                
+                # First check if it's an expression parameter in need of evaluation,
+                # or just some other name
+                if name not in expr_params:
+                    continue
+                
                 # Get user input and strip any " = parsed results" annotations
-                expr = self.get_expr(param_name)
+                expr = self.get_expr(name)
                 # Type to convert to:
-                required_type = self._expr_param_types[param_name]
+                required_type = self._expr_param_types[name]
                 # Converter function that works for string literals
                 convert = get_converter(required_type)
                 
                 # See if it's just a string value by trying a basic conversion
                 try:
                     value = convert(expr) # Evaluate from string to the required type.
-                    self.evaluated_params[param_name] = value 
-                    continue # Success! - Continue onto next param.
+                    
                 except Exception: 
-                    pass
+                    pass # It needs to be parsed as an expression.
                 
-                # It's needs to be parsed as an expression.
+                else:
+                    self.evaluated_params[name] = value 
+                    continue # Success! - Continue the loop to next param.
+                
+                # ===============================================
+                # Parse expression and annotate the GUI input box with the result.
+                
                 # TODO allow expressions for boolean or string 
                 
                 # Expressions can involve any other parameters, using one with the wrong type
                 # will result in a relevant error.
-                context = self.evaluated_params
-                # Allow pi in the expression if it's a numeric type:
+                context = self.literal_params | self.evaluated_params
+                # Add pi to the context if it's a numeric type:
                 if is_numeric_param_type(required_type): 
                     context = {'pi': np.pi} | context
                 
@@ -324,17 +417,25 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 # and annotate the content in the GUI input box to show the result
                 try:
                     value = self._safe_eval(expr, context)
-                    self.evaluated_params[param_name] = value 
-                    # Annotate the string in the input box to show how's interpreted
-                    setattr(self, param_name, expr + f' = {value}')
+                    
                 except Exception as e:
                     # Annotate the string in the input box to show the error
-                    setattr(self, param_name, expr + f' = {e}')
-                    self.__errors.append(f'Failure to evaulate {param_name}: {expr} = {e}')
+                    setattr(self, name, expr + f' = {e}')
+                    self.__errors.append(ValueError(f'Failure to evaulate {name}: {expr} = {e}'))
+                    
+                else:
+                    # Store evaluated result,
+                    # Converting from float to int if needed:
+                    if required_type == self.TypeInt:
+                        value = value.astype(int) if isinstance(value, np.ndarray) else int(value)
+
+                    self.evaluated_params[name] = value
+                    # Annotate the string in the input box to show how's interpreted
+                    setattr(self, name, expr + f' = {value}')
  
         def _parse_expr_dependencies(self, expr):
             """Extract variable names from expression.
-            Returns set(variable_name, )
+            Returns a set containing variable names.
             If it fails to parse, returns an empty set."""            
             variables = set()
             
@@ -364,7 +465,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             else:
                 raise ValueError(f"{param_name} doesn't have an associated expression")
                 
-        def _strip_annotation(input:str):
+        def _strip_annotation(self, input:str):
             '''
             Strips any " = parsed results" annotation that may have been added 
             in the user input box to show the user how their expression is interpreted.
@@ -381,17 +482,27 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             # starts with a digit, letter, or left bracket,
             # assume that's the annotation and strip it. Otherwise,
             # return the input as is.
+            
             match = re.match(r'^(.+?)\s*(?<![<>=])=\s*(?:\[|\d|\w)', input)
             if match:
                 expr = match.group(1)
             else:
                 expr = input
                 
-            return input
+            return expr
         
         def _safe_eval(self, expr, context, max_depth=100):
-            """Safely evaluate mathematical expression"""
+            """Safely evaluate mathematical expression with NumPy array support
+                
+                Args:
+                    expr: Expression string
+                    context: Dict of variables (can contain NumPy arrays or scalars)
+                
+                Returns:
+                    Result (scalar or NumPy array)"""
             # Allowed operations
+            
+            # Arithmetic
             ops = {
                 ast.Add: operator.add,
                 ast.Sub: operator.sub,
@@ -399,7 +510,21 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 ast.Div: operator.truediv,
                 ast.FloorDiv: operator.floordiv,
                 ast.Pow: operator.pow,
+                ast.BitXor: operator.pow, # ^ is usually expected to be pow, not xor.
+                ast.Mod: operator.mod,
                 ast.USub: operator.neg,
+                ast.UAdd: operator.pos,
+                ast.Mod: operator.mod
+            }
+            
+            # Comparison 
+            comparison_ops = {
+                ast.Eq: operator.eq,
+                ast.NotEq: operator.ne,
+                ast.Lt: operator.lt,
+                ast.LtE: operator.le,
+                ast.Gt: operator.gt,
+                ast.GtE: operator.ge,
             }
             
             depth_counter = 0
@@ -410,7 +535,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 nonlocal depth_counter
                 depth_counter += 1
                 if depth_counter > max_depth:
-                    raise RecursionError(f"Expression too complex (exceeded {max_depth} operations)")
+                    raise RecursionError(f"Expression too complex (>{max_depth} operations)")
                 
                 # Recursively evaluate node:
                 if isinstance(node, ast.Constant): # Number or np.ndarray
@@ -418,26 +543,55 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 
                 elif isinstance(node, ast.Name):   # Variable
                     if node.id in context:
-                        return context[node.id]
+                        value = context[node.id]
+                        # Convert to NumPy array if not already
+                        # This ensures consistent behavior
+                        return np.asarray(value)
                     else:
                         raise ValueError(f"Unknown variable: {node.id}")
                     
                 elif isinstance(node, ast.BinOp):  # Binary operation
                     if type(node.op) not in ops:
-                        raise ValueError(f"Unsupported operation: {type(node.op)}")
+                        raise ValueError(f"Unsupported operation: {type(node.op)}.__name__")
                     return ops[type(node.op)](eval_node(node.left), eval_node(node.right))
                 
                 elif isinstance(node, ast.UnaryOp): # Unary operation
                     if type(node.op) not in ops:
-                        raise ValueError(f"Unsupported operation: {type(node.op)}")
+                        raise ValueError(f"Unsupported operation: {type(node.op).__name__}")
                     return ops[type(node.op)](eval_node(node.operand))
                 
-                else:                               # Something else
+                elif isinstance(node, ast.Compare):  # Comparison (e.g., a < b, or chained: a < b < c)
+                    left = eval_node(node.left)
+                    
+                    # For chained comparisons, we need to AND all results
+                    cumulative_result = None
+                    
+                    for op, comparator in zip(node.ops, node.comparators):
+                        right = eval_node(comparator)
+                        
+                        op_type = type(op)
+                        if op_type in comparison_ops:
+                            result = comparison_ops[op_type](left, right)
+                            
+                            # Combine with previous results using AND
+                            if cumulative_result is None:
+                                cumulative_result = result
+                            else:
+                                cumulative_result = np.logical_and(cumulative_result, result)
+                            
+                            # For next comparison in chain: left becomes right
+                            left = right
+                        else:
+                            raise ValueError(f"Unsupported comparison: {op_type.__name__}")
+                        
+                    return cumulative_result
+                
+                else:  # Something else
                     raise ValueError(f"Unsupported expression type: {type(node)}")
             
             try:
                 tree = ast.parse(expr, mode='eval')
-                return float(eval_node(tree.body))
+                return np.asarray(eval_node(tree.body))
             except SyntaxError:
                 raise ValueError(f"Invalid expression syntax: {expr}")
 
@@ -446,7 +600,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             PCell interface implementation
             """
             if self.__errors:
-                    text = f'{source_pcell_name}_ParamSweep ({len(self._errors)} error(s) - check console")'
+                    text = f'{source_pcell_name}_ParamSweep ({len(self.__errors)} error(s) - check console")'
                     print(f'{source_pcell_name}_ParamSweep instance display_text called: ' + text)
                     return text
             
@@ -470,35 +624,33 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             it shifts the entire next column over to accommodate it.
             """
             print(f'{source_pcell_name}_ParamSweep instance produce_impl at {datetime.now()}')
+            
+            print(f'{self.evaluated_params=}')
+            print(f'{self.evaluated_params.get("width")=}')
+            
             dbu = self.layout.dbu
+            row_pad = int( self.evaluated_params['_row_pad'] / dbu )
+            col_pad = int( self.evaluated_params['_col_pad'] / dbu )
             
-            if self.__errors: # If there are errors, show them instead of generating the geometery
-                self.display_error_geom()
-                return
-            
-            # Generate Geometery
-            try: 
-                fixed_params, _row_sweep, _col_sweep = self.generate_sweep()
-                print('Generated sweep parameters in produce_impl:')
-                print(f'fixed_params: {fixed_params}')
-                print(f'_row_sweep: {_row_sweep}')
-                print(f'_col_sweep: {_col_sweep}')
+            try:
                 
-                # If no sweep defined, just create a single instance 
-                # of the underlying PCell with the current parameters:
-                if not _row_sweep and not _col_sweep:
-                    self.insert_labeled_variant(fixed_params)
+                # If there are errors, show them instead of generating the geometery
+                if self.__errors: 
+                    self.display_error_geom()
+                    return
+                
+                # =========================== Generate Geometery ===========================
+                             
+                # If no sweep defined, this will just create a single instance of the underlying PCell with the current parameters.
                 
                 # Create Parametric Sweep of underlying PCell:
                 x_pos = 0
-                for i in range(columns):
+                for i in range(self.n_cols):
                     y_pos = 0
                     max_x = 0 # Save the x coordinate of the widest inserted instance.
-                    for j in range(rows):
-                        # Create parameter set for this variation by combining the fixed parameters with the 
-                        # current row and column sweep parameters (dicts of {param_name: value}):
-                        # params = fixed_params | row_spec | col_spec
-                        params = self.params_at_index(j, i)
+                    for j in range(self.n_rows):
+                        # Create parameter set for this variation under the row and column sweep:
+                        params = self.params_at_index(j, i) # dict of {param_name: value}
                         
                         inst = self.insert_labeled_variant(
                                     params, 
@@ -506,13 +658,13 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                                     align='UL')
                                                 
                         # Update y_pos and x_pos based on the bbox:
-                        y_pos = inst.bbox().bottom - int( self._row_pad / dbu)
+                        y_pos = inst.bbox().bottom - row_pad
                     
                         # Update max_x as needed:
                         max_x = max( max_x, inst.bbox().right )
                 
                     # Update y_pos
-                    x_pos = max_x + int( self._col_pad / dbu)
+                    x_pos = max_x + col_pad
                 
 
                 #    TODO:   should be multiple copies, work on that later 
@@ -526,21 +678,23 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 self.cell.shapes(self.layout.layer(0, 0)).insert(pya.Box(0, 0, 100/dbu, 100/dbu))
         
         def params_at_index(self, row:int, col:int):
-            '''Returns dict of params for this index'''
+            '''Returns dict of all the params for this index as {param_name: value}'''
+            
             def index_broadcasted(values, row, col):
                 ''' Returns the parameter value requested by the given index, effectively broadcasting
                 scalar or vector values for indexes row, col. Each swept value should be stored in a np.ndarray whose shape 
                 indicates whether it is a row sweep (r, 1), col sweep (1, c), or matrix (r, c). Scalars can be an array-like
                 with one element or just the value. 
                 '''
-                if not values: return None
+                if values is None: return None
                 
-                # Make sure value(s) is an a np.ndarray
-                values = np.array(values)                
+                # Make sure value(s) is an a np.ndarray and not empty
+                values = np.asarray(values)
+                if values.size == 0: return None      
     
                 # Scalar
                 if values.size == 1:
-                    params[name] = values.item()
+                    return values.item()
                 
                 # Swept Parameter
                 elif len(values.shape) == 2:
@@ -549,7 +703,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     col = 0 if n_cols == 1 else col # Row Swept
                     row = 0 if n_rows == 1 else row # Col Swept
                     
-                    params[name] = values[row, col]
+                    return values.item(row, col)
                     
                 # Problem
                 elif len(values.shape) == 1:
@@ -562,22 +716,32 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     raise RuntimeError(f'Too many dimensions for parameter {name} in sweep! '
                                         f'self.evaluated_params had a {len(values.shape)}D array of values instead of a 2D array '
                                         'with shape (r, 1), (1, c), or (r, c).')
+            
             params = {}
             
+            # For each source PCell parameter,
+            # Get the appropriate value for the given index
+            # If there was no value(s), use the default.
             for name in self.src_params.keys():
-                values = self.evaluated_params.get(name)
                 
-                # If there is nothing in self.evaluated_params, use the default:
-                if not values:
-                    params[name] = self.src_params[name].default
+                # DEBUG!!
+                if name == 'width': 
+                    print(f'{self.evaluated_params.get("width")=}')
+                    print(f'index_broadcasted(self.evaluated_params.get({name}), {row}, {col}) = {index_broadcasted(self.evaluated_params.get(name), row, col)}')
                 
-                # Get the appropriate value for the given index
-                params[name] = index_broadcasted(values, row, col)
-
+                value = index_broadcasted(self.evaluated_params.get(name), row, col) or \
+                        self.literal_params.get(name) or \
+                        self.src_params[name].default
+                
+                params[name] = value
+                
+            return params
+                    
         def display_error_geom(self):
             ''' Generate text geometry showing the content of self.__errors'''
-            # Written by Claude-4-5-sonnet
-            error_text = "ERRORS:\n" + "\n".join(self._errors)
+            # Written by Claude-4-5-sonnet, with minor modifications
+            
+            error_text = "ERRORS:\n  • " + "\n  • ".join(map(str, self.__errors))
         
             text_region = create_text(
                 error_text,
@@ -591,8 +755,9 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             
             print(f"\n{'='*50}")
             print("PCELL PARAMETER ERRORS:")
-            for err in self._errors:
-                print(f"  • {err}")
+            print("ERRORS:\n" + "\n\n".join(
+                  map(lambda err: ''.join(traceback.format_exception(err)),
+                      self.__errors)))
             print(f"{'='*50}\n")
         
         def insert_labeled_variant(self, params, trans=pya.Trans(0, 0), align=None):
@@ -616,7 +781,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                         
             # Add label for the variant
             label = self.create_label(params, variant_cell.bbox())
-            labeled_variant.shapes(self.l_label_layer).insert(label)
+            labeled_variant.shapes(self._l_label_layer).insert(label)
 
             if align:            
                 anchor = pya.Vector(get_bbox_point(align, labeled_variant.bbox()))
@@ -630,9 +795,20 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             '''Create a variant of underlying PCell as a cell in the main layout, and 
             return the cell object'''
             # Create cell in the main layout
+            print('create_variant called with params: ', params)
+            
+            #  Checking, shouldn't be necessary
+            typed_params = params.copy()
+            # for param_name, value in params.items():
+            #     if param_name in self.src_params.keys():
+            #         param_type = self.src_params[param_name].type
+            #         converter = get_converter(param_type)
+            #         typed_params[param_name] = converter(value)
+
+            
             pcell_var_id = self.layout.add_pcell_variant(self.src_lib,
                                                 self.src_pcell_decl.id(), 
-                                                params)
+                                                typed_params)
             # Fetch and return the cell object
             return self.layout.cell(pcell_var_id)
  
@@ -693,13 +869,16 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             
             # Position it          
             _label_anchor = get_bbox_point(self._label_anchor, bbox)
-            offset = pya.Vector(int(self._label_x/dbu), int(self._label_y/dbu))
+            x_offset = int(self.evaluated_params['_label_x'] / dbu)
+            y_offset = int(self.evaluated_params['_label_y'] / dbu)
+            offset = pya.Vector(x_offset, y_offset)
             pos = _label_anchor + offset # where to place the center of the text bonding box
             
             # Create text as polygons
-            text_region = create_text(text, self._label_height, dbu, 
-                                        trans=pya.Trans(rot = self._label_rot), # 0, 1, 2, 3 rotation convention
-                                        pos=pos) 
+            
+            text_region = create_text(text, self.evaluated_params['_label_height'], dbu, 
+                                      trans=pya.Trans(rot = self._label_rot), # 0, 1, 2, 3 rotation convention
+                                      pos=pos) 
             
             return text_region
         
@@ -714,66 +893,67 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             formatted = params.copy()
             for param_name, value in formatted.items():
                 if self.src_params[param_name].type == pya.PCellParameterDeclaration.TypeDouble:
-                    formatted[param_name] = f'{value:.3g}'
+                    formatted[param_name] = f'{float(value):.3g}'
             return formatted
                 
             # TODO: Allow for selection of text alignment (centered, left, etc), 
             # or make it depend on the choice of _label_anchor?
                 
-        def generate_sweep(self):
-            '''Parses the _row_sweep and _col_sweep parameters into a list of dictionaries of parameter values for each variation in the sweep, 
-            and a dictionary of the fixed parameters that are not being swept over.
+        # def generate_sweep(self):
+        #     '''Parses the _row_sweep and _col_sweep parameters into a list of dictionaries of parameter values for each variation in the sweep, 
+        #     and a dictionary of the fixed parameters that are not being swept over.
             
-            Returns: (fixed_params, _row_sweep, _col_sweep)
-                where fixed_params is a dict of {param_name: value} for the parameters that are not being swept over, 
-                and _row_sweep and _col_sweep are lists of dicts of {param_name: value} for each variation in the row and column sweeps, respectively.
-            '''
-            def dict_zip(sweep_dict):
-                '''Converts a dictionary of {param_name: [values]} into a 
-                list of dictionaries of {param_name: value} for each iteration.
+        #     Returns: (fixed_params, _row_sweep, _col_sweep)
+        #         where fixed_params is a dict of {param_name: value} for the parameters that are not being swept over, 
+        #         and _row_sweep and _col_sweep are lists of dicts of {param_name: value} for each variation in the row and column sweeps, respectively.
+        #     '''
+        #     def dict_zip(sweep_dict):
+        #         '''Converts a dictionary of {param_name: [values]} into a 
+        #         list of dictionaries of {param_name: value} for each iteration.
                 
-                For example, {'a': [1, 2], 'b': [3, 4]} would be converted into the sequence: 
-                {'a': 1, 'b': 3}, {'a': 2, 'b': 4}
+        #         For example, {'a': [1, 2], 'b': [3, 4]} would be converted into the sequence: 
+        #         {'a': 1, 'b': 3}, {'a': 2, 'b': 4}
                 
-                Returns a list of [{param_name: value}, ...] 
-                '''
-                # Check for empty sweep_dict:
-                if sweep_dict is None or len(sweep_dict) == 0:
-                    return [{}] 
+        #         Returns a list of [{param_name: value}, ...] 
+        #         '''
+        #         # Check for empty sweep_dict:
+        #         if sweep_dict is None or len(sweep_dict) == 0:
+        #             return [{}] 
                 
-                # Check that the lists of values in sweep_dict are all the same length:
-                lengths = [len(values) for values in sweep_dict.values()]
-                if len(set(lengths)) > 1:
-                    raise ValueError(f"All parameters in a sweep must have the same number of values. Found lengths: {lengths}")
-                num_variations = lengths[0]
+        #         # Check that the lists of values in sweep_dict are all the same length:
+        #         lengths = [len(values) for values in sweep_dict.values()]
+        #         if len(set(lengths)) > 1:
+        #             raise ValueError(f"All parameters in a sweep must have the same number of values. Found lengths: {lengths}")
+        #         num_variations = lengths[0]
                 
-                # Convert from {param_name: [values]} to list of {param_name: value} for each variation:
-                variations = []
-                for i in range(num_variations):
-                    variations.append({param_name: sweep_dict[param_name][i] for param_name in sweep_dict.keys()})
+        #         # Convert from {param_name: [values]} to list of {param_name: value} for each variation:
+        #         variations = []
+        #         for i in range(num_variations):
+        #             variations.append({param_name: sweep_dict[param_name][i] for param_name in sweep_dict.keys()})
                     
-                return variations
+        #         return variations
                 
-            fixed_params = self.get_src_params() # current parameter values from underlying PCell
+        #     fixed_params = self.get_src_params() # current parameter values from underlying PCell
             
-            # TODO: I haven't implented secondary row or column sweeps
+        #     # TODO: I haven't implented secondary row or column sweeps
             
-            # TODO: Extract details like the label placement, and arrays of identical variants
-            # from existing cell in the layout.
-            # TODO: Create a menu action or a macro to use existing cells in the layout
-            # as the source for the sweep. (The existing cells have to contain PCells).
+        #     # TODO: Extract details like the label placement, and arrays of identical variants
+        #     # from existing cell in the layout.
+        #     # TODO: Create a menu action or a macro to use existing cells in the layout
+        #     # as the source for the sweep. (The existing cells have to contain PCells).
             
-            # Remove the swept parameters from the fixed parameters dict
-            for key in self.parsed_row_sweep.keys():
-                fixed_params.pop(key) 
-            for key in self.parsed_col_sweep.keys():
-                fixed_params.pop(key)
+        #     # Remove the swept parameters from the fixed parameters dict
+        #     for key in self.parsed_row_sweep.keys():
+        #         fixed_params.pop(key) 
+        #     for key in self.parsed_col_sweep.keys():
+        #         fixed_params.pop(key)
             
-            # generator of dicts of {param_name: value} for each variation in the row sweep
-            _row_sweep = dict_zip(self.parsed_row_sweep) 
-            _col_sweep = dict_zip(self.parsed_col_sweep) 
+        #     # generator of dicts of {param_name: value} for each variation in the row sweep
+        #     _row_sweep = dict_zip(self.parsed_row_sweep) 
+        #     _col_sweep = dict_zip(self.parsed_col_sweep) 
             
-            return fixed_params, _row_sweep, _col_sweep
+        #     return fixed_params, _row_sweep, _col_sweep
+
             
         def __copy_param(self, param_decl, default=None, name:str=None, type_code:int=None, description:str=None,
                          hidden:bool=None, readonly:bool=None, unit:str=None, 
@@ -788,41 +968,44 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             Also stores the parameter declarations of the underlying PCell in a dictionary 
             *self.src_params* for easy access when generating the sweep.
             '''
+            # For every paramter attribute: override if provided, otherwise use the value from param_decl
+                
+            if type_code is None:
+                type_code = param_decl.type
+            elif not is_valid_param_type(type_code):
+                raise ValueError(f'Invalid type code for Klayout PCell parameter: {type_code}. Must be one of '
+                                       ' pya.PCellParameterDeclaration.TypeInt, pya.PCellParameterDeclaration.TypeDouble,'
+                                       ' pya.PCellParameterDeclaration.TypeString, pya.PCellParameterDeclaration.TypeLayer, etc.')
+                
+            name      = param_decl.name if name is None else str(name)
+            describe  = param_decl.description if description is None else str(description)
+            default   = param_decl.default if default is None else get_converter(type_code)(default)
+            hidden    = param_decl.hidden if hidden is None else hidden in (True, 'True', 1, '1', 'yes')
+            readonly  = param_decl.readonly if readonly is None else readonly in (True, 'True', 1, '1', 'yes') 
+            unit      = param_decl.unit if unit is None else str(unit)
+            min_value = param_decl.min_value if min_value is None else min_value
+            max_value = param_decl.max_value if max_value is None else max_value
+            
+            if choices is None and len(param_decl.choice_values()) > 0:
+                choices = list(zip(param_decl.choice_descriptions(), param_decl.choice_values()))
+
+            # It will throw an error if you assign choices=None. Only assign the choices argument if you have a value for it.
+            if choices is not None:
+                self.param(name, type_code, describe, 
+                            default=default, hidden=hidden, readonly=readonly,
+                            unit=unit, max_value=max_value, min_value=min_value,
+                            choices=choices)
+            else:
+                self.param(name, type_code, describe, 
+                            default=default, hidden=hidden, readonly=readonly,
+                            unit=unit, max_value=max_value, min_value=min_value)
+                
             # Store the parameter declarations of the underlying PCell in a 
             # dictionary for easy access when generating the sweep:
             self.src_params[param_decl.name] = param_decl
             
-            
-            # For every paramter: override if provided, otherwise use the value from param_decl
-            name = str(name) if name is not None else param_decl.name
-            description = str(description) if description is not None else param_decl.description
-
-            if type_code is not None:
-                if is_valid_param_type(type_code):
-                    param_decl.type = type_code
-                else: raise ValueError(f'Invalid type code for Klayout PCell parameter: {type_code}. Must be one of '
-                                       ' pya.PCellParameterDeclaration.TypeInt, pya.PCellParameterDeclaration.TypeDouble,'
-                                       ' pya.PCellParameterDeclaration.TypeString, pya.PCellParameterDeclaration.TypeLayer, etc.')
-            else: type_code = param_decl.type
-            
-            default = get_converter(type_code)(default) if default is not None else param_decl.default
-            
-            hidden   = hidden   in (True, 'True', 1, '1', 'yes') if hidden is not None else param_decl.hidden
-            readonly = readonly in (True, 'True', 1, '1', 'yes') if readonly is not None else param_decl.readonly
-            unit = str(unit) if unit is not None else param_decl.unit
-            min_value = min_value if min_value is not None else param_decl.min_value
-            max_value = max_value if max_value is not None else param_decl.max_value
-            
-            if choices is None and len(param_decl.choice_values()) > 0:
-                choices = list(zip(param_decl.choice_descriptions(), param_decl.choice_values()))
-    
-            # It will throw an error if you assign choices=None. Only assign the choices argument if you have a value for it.
-            if choices is not None:
-                self.param(name, type_code, description, default, hidden, readonly,
-                            unit, max_value, min_value, choices=choices)
-            else:
-                self.param(name, type_code, description, default, hidden, readonly,
-                            unit, max_value, min_value)
+            print(f'Copied param: {name} as type {PARAM_TYPES[type_code]} with default {default!r}')
+            print(f'Current Value: {name} = {getattr(self, name)}')
         
         def _pcell_from_lib(self, source_pcell_name, lib_name):
             '''Find the target PCell declaration in the given library.
@@ -938,8 +1121,8 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 if range_allowed and ':' in s: # Parse this value as a range
                     try:
                         # Parse the range string, and add on the values as strings
-                        expanded_range = parse_range(s, convert_type)
-                        values.extend(map(str, expanded_range)) 
+                        expanded_range = parse_range(s, PARAM_TYPES[param_type])
+                        values.extend(expanded_range) 
                     except Exception as e: # Failed to parse as range
                         e.add_note(f'Failed to parse {s} as a numeric range.')
                         raise
@@ -1003,19 +1186,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     
                 if not existing_cell:
                     raise Exception(f"Cell '{self.cell_name}' not found in currently active layout.")
-        
-        def get_src_params(self):
-            '''Returns the parameters for the underlying (source) PCell, using the current values from this wrapper PCell,
-            or the default if there is a problem evaluating the user's input
-            Returns: dict of {param_name: value}
-            '''
-            params = {}
-            for param_name in self.src_params.keys():
-                value = self.evaluated_params.get(param_name)
-                if not value:
-                    value = self.src_params[param_name].default
-                params[param_name] = value
-            return params
 
     return ParamSweep
 
@@ -1035,12 +1205,22 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
 
 if __name__ == '__main__':
     try:
+        import importlib
+        import sys
+        importlib.reload(sys.modules['pya_helpers'])
+        importlib.reload(sys.modules['general_helpers'])
+        from pya_helpers import get_converter
+    
         # Usage:
         ParamSweepHEMT = custom_sweep_pcell("HEMT", "MyLib")
+        convert = get_converter(ParamSweepHEMT.TypeInt)
+        print(convert('1'))
+        print(convert('2.00'))
+        print(repr(ParamSweepHEMT._parse_values_to_type(1, '1:20:5', ParamSweepHEMT.TypeInt)))
 
-        # Register it
-        lib = pya.Library.library_by_name("MyLib")
-        lib.layout().register_pcell(f'HEMT_ParamSweep', ParamSweepHEMT())
+        # # Register it
+        # lib = pya.Library.library_by_name("MyLib")
+        # lib.layout().register_pcell(f'HEMT_ParamSweep', ParamSweepHEMT())
     except Exception as e:
-        print('ParamSweep error: ', e)
+        print('ParamSweep error: ', traceback.format_exc())
         # f'{LIB_NAME} loaded with PCells: {list(PCELLS.keys()).extend(['HEMT'])}'
