@@ -7,6 +7,7 @@
 
 # Except for 
 python/__pycache__
+python/ParamSweep_old.py
 
 # 3. Re-include the .gitignore file itself (optional but recommended)
 !.gitignore
