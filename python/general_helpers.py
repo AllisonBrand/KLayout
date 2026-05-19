@@ -1,5 +1,11 @@
 import numpy as np
 
+def first_valid(*values, default=None):
+    '''Returns the first values that isn't None in values, or default if no valid value is found.
+    This is more concise than a loop with an if statement.
+    '''
+    return next((v for v in values if v is not None), default)
+
 def parse_range(range_str:str, dtype=float):
     '''Parse range_str into a np.ndarray of values.
     

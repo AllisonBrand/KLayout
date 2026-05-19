@@ -85,17 +85,27 @@ def add_label(text_string, height_um, x_um, y_um, layout, cell, layer):
     layer_idx = layout.layer(layer) if isinstance(layer, pya.LayerInfo) else layer
     cell.shapes(layer_idx).insert(text_region)
 
-def as_point(point):
+def as_point(point, scale_unit=1):
     '''Convert an input into a into a pya.Point. Input must be a pya.Point, pya.Vector,
-    or an iterable containing (x, y) coordinates in dbu.'''
+    or an iterable containing (x, y) coordinates.
+    scale_unit: If given, scale coordinates, dividing x and y by scale_unit and rounding to an integer.'''
+    
     if isinstance(point, pya.Point):
-        return point
+        return point / scale_unit
+    
     elif isinstance(point, pya.Vector):
-        return pya.Point(point)
+        return pya.Point(point / scale_unit)
+    
     elif isinstance(point, Iterable) and len(point) == 2:
-        return pya.Point(point[0], point[1])
+        x, y = round(point[0] / scale_unit), round(point[1] / scale_unit) 
+        if abs(x - point[0]) > 0.1 or abs(y - point[1]) > 0.1: # Arbitraty cut-off for when rounding is significant enough to give a warning.
+            scale_str = f' / {scale_unit}' if scale_unit != 1 else ''
+            warnings.warn(f"Rounding ({point[0]}{scale_str}, {point[1]}{scale_str}) to ({x}, {y}) in conversion to pya.Point, dbu units.")
+            
+        return pya.Point(x, y)
+    
     else:
-        raise TypeError('point must must be convertable to a pya.Point. Received: ' + repr(point))
+        raise TypeError('point must must be convertable to a pya.Point. Received: ' + repr(point) + f' with scale unit {scale_unit}.')
 
 def get_bbox_point(spec_str:str, bbox:pya.Box) -> pya.Point:
     '''Returns the point from the bounding box as a pya.Point.

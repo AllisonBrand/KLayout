@@ -8,9 +8,11 @@ import numpy as np
 import warnings
 # from string.templatelib import Interpolation, Template
 
+# TODO: Better-looking display for evaluated row, col, matrix expressions
+# TODO: Multiple copies of each variant
 
-from pya_helpers import create_text, get_bbox_point, get_converter, is_valid_param_type, is_numeric_param_type, PARAM_TYPES
-from general_helpers import parse_range, UserInputError
+from pya_helpers import create_text, get_bbox_point, as_point, get_converter, is_valid_param_type, is_numeric_param_type, PARAM_TYPES
+from general_helpers import parse_range, UserInputError, first_valid
 from DependencyGraph import DependencyGraph
     
 def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=False) -> pya.PCellDeclarationHelper:
@@ -73,18 +75,22 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 
                 # I added "_" before every paramter name to reduce the risk that any underlying PCell params get overriden.
                 
+                self.wrapper_defaults = {'_row_pad': 100.0,
+                                         '_col_pad': 100.0,
+                                         '_label_height': 30.0}
+                
                 # Sweep Array Configuration 
                 self.param("__sweep_header", self.TypeNone, " Sweep Configuration ".center(32, '═')) # Just holds the section header in the GUI.
                 self.param("_row_sweep", self.TypeString, "Define Row Sweep", default='') # sep_GD: 1, 2, 3
                 self.param("_col_sweep", self.TypeString, "Define Col Sweep", default='') # gate_len: 0.5, 1, 2
-                self.param("_row_pad", self.TypeString, "Row Padding (µm)", default='100.0')
-                self.param("_col_pad", self.TypeString, "Column Padding (µm)", default='100.0')
+                self.param("_row_pad", self.TypeString, "Row Padding (µm)", default    = self.wrapper_defaults['_row_pad'])
+                self.param("_col_pad", self.TypeString, "Column Padding (µm)", default = self.wrapper_defaults['_col_pad'])
 
                 # Labeling
                 self.param("__label_header", self.TypeNone, " Labeling ".center(32, '═')) # Just holds the section header in the GUI.
                 self.param("_format_str", self.TypeString, "Label Format", default="GS:{sep_SG}, G:{gate_len}, GD:{sep_GD}")
                 self.param("_l_label", self.TypeLayer, "Label Text Layer", default=pya.LayerInfo(1, 0))
-                self.param("_label_height", self.TypeString, "Label Height (µm)", default='30.0')
+                self.param("_label_height", self.TypeString, "Label Height (µm)", default = self.wrapper_defaults['_label_height'])
                 self.param("_label_rot", self.TypeInt, "Label Rotation", default=0, choices=[('0°', 0), ('90°', 1),  ('180°', 2), ('270°', 3)])
                 self.param("_label_x", self.TypeString, "Label X Offset (µm)", default='0.0')
                 self.param("_label_y", self.TypeString, "Label Y Offset (µm)", default='0.0')
@@ -163,6 +169,18 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 # Evaluate expression parameters
                 self.eval_params()
                 
+                # Make sure that _row_pad is either scalar or only depends on the row sweep.
+                # Same for _col_pad.
+                self.validate_row_col_pads()
+                
+                #  DEBUG !!!!
+                print(f"{self._label_x=}")
+                print(f"{self._label_y=}")
+                print(f"{self.evaluated_params['_label_x']=}")
+                print(f"{self.evaluated_params['_label_y']=}")
+                print(f"{self.get_value('_label_x')=}")
+                print(f"{self.get_value('_label_y')=}")
+                
                 # Check if the label _format_str references valid parameters 
                 # from the underlying PCell, and raise ValueError if it doesn't.
                 self.validate_label_fstring()
@@ -190,6 +208,80 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             except Exception as e:
                 print(f"Error in {source_pcell_name}_ParamSweep coerce_parameters_impl, when trying to print other errors:")
                 traceback.print_exception(e)
+                    
+        def produce_impl(self):
+            """
+            Implementation of the PCell interface: generates the layouts.
+            
+            Accounts for bounding boxes so that the instances in the sweep don't overlap.
+            self._row_pad determines the padding between rows. 
+            self._col_pad sets the minimum padding between columns. If something in a row is wide, 
+            it shifts the entire next column over to accommodate it.
+            """
+            print(f'{source_pcell_name}_ParamSweep produce_impl at {datetime.now()}')
+            
+            dbu = self.layout.dbu
+            
+            try:
+                
+                # If there are errors, show them instead of generating the geometery
+                if self.__errors: raise Exception("Prior Errors. Cannot generate geometry.")
+                    
+                    
+                # =========================== Generate Geometery ===========================
+                             
+                # If no sweep defined, this will just create a single instance of the underlying PCell with the current parameters.
+                
+                # Create Parametric Sweep of underlying PCell:
+                x_pos = 0
+                for i in range(self.n_cols):                    
+                    y_pos = 0
+                    max_x = 0 # Save the x coordinate of the widest inserted instance.
+                    
+                    for j in range(self.n_rows):
+                        # Create parameter set for this variation under the row and column sweep:
+                        params = self.params_at_index(j, i) # dict of {param_name: value}
+                        
+                        # Insert the labeled geometry for this parameter set.
+                        inst = self.insert_labeled_variant(
+                                    params, 
+                                    pya.Trans(x_pos, y_pos), 
+                                    align='UL',
+                                    label_offset = as_point((self.get_value('_label_x', j, i), 
+                                                             self.get_value('_label_y', j, i)), scale_unit=dbu),
+                                    text_height = self.get_value('_label_height', j, i))
+                        
+                        row_pad = round( self.get_value('_row_pad', j, 0) / dbu )                       
+                        # Update y_pos and x_pos based on the bbox:
+                        y_pos = inst.bbox().bottom - row_pad
+                    
+                        # Update max_x as needed:
+                        max_x = max( max_x, inst.bbox().right )
+
+                    col_pad = round( self.get_value('_col_pad', 0, i) / dbu )
+                    # Update y_pos
+                    x_pos = max_x + col_pad
+                
+
+                #    TODO:   should be multiple copies, work on that later 
+    
+    
+                #         
+                print(f'produce_impl finished for {source_pcell_name}_ParamSweep at {datetime.now()}')
+                
+            except Exception as e:
+                # Print errors to the console and display them as text geometry.
+                # If a PCell function lets an error reach Klayout's caller, 
+                # and the user saves the .gds file with the error it may result in file corruption.
+                print(f"produce_impl error error: \n{traceback.format_exc()}")
+                self.__errors.append(e)
+                 
+                try:
+                    # Display errors as text geometry
+                    self.display_error_geom()
+                except Exception:
+                    # Insert a default shape to prevent empty cell
+                    self.cell.shapes(self.layout.layer(0, 0)).insert(pya.Box(0, 0, 100/dbu, 100/dbu))
                 
         def parse_and_validate_sweeps(self):
             '''Parse the row and column sweep specifications into param_name and values.
@@ -297,6 +389,30 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 raise ValueError(f"Label format string references parameters that are not in the underlying PCell: {validator.missing_keys}. " +
                                     f"Invalid names are marked with '??' in the label text.")
 
+        def validate_row_col_pads(self):
+            ''' Make sure that _row_pad is either scalar or only depends on the row sweep.
+                Same for _col_pad.'''
+            self.evaluated_params['_row_pad'] = row_pad = np.asarray(self.evaluated_params['_row_pad'])
+            self.evaluated_params['_col_pad'] = col_pad = np.asarray(self.evaluated_params['_col_pad'])
+            
+             # Check if row pad is either scalar or depends only on the row sweep.
+            if row_pad.size != 1 and row_pad.shape != (self.n_rows, 1):
+                    # Set row pad to a valid scalar instead
+                    row_pad = first_valid(self.get_value('_row_pad'), self.wrapper_defaults['_row_pad'])
+                    self.evaluated_params['_row_pad'] = np.asarray(row_pad)
+                    setattr(self, '_row_pad', str(row_pad)) # Reset in GUI too.
+                    self.__warnings.append("Row Pad must be either scalar or be the same shape as row sweep. "
+                                            f"Reseting to {row_pad} um.")
+              
+            # Check if col pad is either scalar or depends only on the col sweep.      
+            if col_pad.size != 1 and col_pad.shape != (1, self.n_cols):
+                    # Set col pad to a valid scalar instead
+                    col_pad = first_valid(self.get_value('_col_pad'), self.wrapper_defaults['_col_pad'])
+                    self.evaluated_params['_col_pad'] = np.asarray(col_pad)
+                    setattr(self, '_row_pad', str(row_pad)) # Reset in GUI too.
+                    self.__warnings.append("Col Pad must be either scalar or be the same shape as col sweep. "
+                                            f"Reseting to {col_pad} um.")
+
         def expr_param_names(self, search=False):
             '''Getter for the names of parameters which need to be evaluated as expressions.
             Swept parameters are excluded, as they are already controlled by row or col sweep.
@@ -398,7 +514,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     pass # It needs to be parsed as an expression.
                 
                 else:
-                    self.evaluated_params[name] = value 
+                    self.evaluated_params[name] = np.asarray(value)
                     continue # Success! - Continue the loop to next param.
                 
                 # ===============================================
@@ -416,7 +532,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 # Attempt to evaluate expr, 
                 # and annotate the content in the GUI input box to show the result
                 try:
-                    value = self._safe_eval(expr, context)
+                    value = np.asarray(self._safe_eval(expr, context))
                     
                 except Exception as e:
                     # Annotate the string in the input box to show the error
@@ -427,7 +543,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     # Store evaluated result,
                     # Converting from float to int if needed:
                     if required_type == self.TypeInt:
-                        value = value.astype(int) if isinstance(value, np.ndarray) else int(value)
+                        value = value.astype(int)
 
                     self.evaluated_params[name] = value
                     # Annotate the string in the input box to show how's interpreted
@@ -478,12 +594,11 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             # match = re.match(r'^(.*?)=[^=]+$', input)
             
             # If "=" is found, the "=" is not part of "<=", ">=", or "==",
-            # and the part after the "="
-            # starts with a digit, letter, or left bracket,
+            # and something comes after the "="
             # assume that's the annotation and strip it. Otherwise,
             # return the input as is.
             
-            match = re.match(r'^(.+?)\s*(?<![<>=])=\s*(?:\[|\d|\w)', input)
+            match = re.match(r'^(.+?)\s*(?<![<>=])=\s*[^=]', input)
             if match:
                 expr = match.group(1)
             else:
@@ -613,73 +728,30 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 text = f'{source_pcell_name}_ParamSweep (?)'
 
             return text
-                  
-        def produce_impl(self):
-            """
-            Implementation of the PCell interface: generates the layouts.
-            
-            Accounts for bounding boxes so that the instances in the sweep don't overlap.
-            self._row_pad determines the padding between rows. 
-            self._col_pad sets the minimum padding between columns. If something in a row is wide, 
-            it shifts the entire next column over to accommodate it.
-            """
-            print(f'{source_pcell_name}_ParamSweep instance produce_impl at {datetime.now()}')
-            
-            print(f'{self.evaluated_params=}')
-            print(f'{self.evaluated_params.get("width")=}')
-            
-            dbu = self.layout.dbu
-            row_pad = int( self.evaluated_params['_row_pad'] / dbu )
-            col_pad = int( self.evaluated_params['_col_pad'] / dbu )
-            
-            try:
-                
-                # If there are errors, show them instead of generating the geometery
-                if self.__errors: 
-                    self.display_error_geom()
-                    return
-                
-                # =========================== Generate Geometery ===========================
-                             
-                # If no sweep defined, this will just create a single instance of the underlying PCell with the current parameters.
-                
-                # Create Parametric Sweep of underlying PCell:
-                x_pos = 0
-                for i in range(self.n_cols):
-                    y_pos = 0
-                    max_x = 0 # Save the x coordinate of the widest inserted instance.
-                    for j in range(self.n_rows):
-                        # Create parameter set for this variation under the row and column sweep:
-                        params = self.params_at_index(j, i) # dict of {param_name: value}
-                        
-                        inst = self.insert_labeled_variant(
-                                    params, 
-                                    pya.Trans(x_pos, y_pos), 
-                                    align='UL')
-                                                
-                        # Update y_pos and x_pos based on the bbox:
-                        y_pos = inst.bbox().bottom - row_pad
-                    
-                        # Update max_x as needed:
-                        max_x = max( max_x, inst.bbox().right )
-                
-                    # Update y_pos
-                    x_pos = max_x + col_pad
-                
-
-                #    TODO:   should be multiple copies, work on that later 
-    
-    
-                #         
-                print(f'produce_impl finished for {source_pcell_name}_ParamSweep instance at {datetime.now()}')
-            except Exception as e:
-                print(f"produce_impl error error: \n{traceback.format_exc()}")
-                # Insert a default shape to prevent empty cell
-                self.cell.shapes(self.layout.layer(0, 0)).insert(pya.Box(0, 0, 100/dbu, 100/dbu))
-        
+       
         def params_at_index(self, row:int, col:int):
-            '''Returns dict of all the params for this index as {param_name: value}'''
+            '''Returns dict of all the params for this index as {param_name: value}'''            
+            params = {}
             
+            # For each source PCell parameter,
+            # Get the appropriate value for the given index
+            # If there was no value(s), use the default.
+            for name in self.src_params.keys():
+                    
+                value = first_valid(self.get_value(name, row, col), 
+                                    self.src_params[name].default)
+                
+                params[name] = value
+                
+            return params
+        
+        def get_value(self, param_name, row=0, col=0):
+            '''
+            Returns the parameter value at the given sweep index, or None if not found. 
+            
+            Search order is self.evaluated_params, then self.literal_params. 
+            If row, col index is not given and it's a swept parameter, will give the first value from the sweep.
+            '''
             def index_broadcasted(values, row, col):
                 ''' Returns the parameter value requested by the given index, effectively broadcasting
                 scalar or vector values for indexes row, col. Each swept value should be stored in a np.ndarray whose shape 
@@ -716,27 +788,13 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     raise RuntimeError(f'Too many dimensions for parameter {name} in sweep! '
                                         f'self.evaluated_params had a {len(values.shape)}D array of values instead of a 2D array '
                                         'with shape (r, 1), (1, c), or (r, c).')
-            
-            params = {}
-            
-            # For each source PCell parameter,
-            # Get the appropriate value for the given index
-            # If there was no value(s), use the default.
-            for name in self.src_params.keys():
-                
-                # DEBUG!!
-                if name == 'width': 
-                    print(f'{self.evaluated_params.get("width")=}')
-                    print(f'index_broadcasted(self.evaluated_params.get({name}), {row}, {col}) = {index_broadcasted(self.evaluated_params.get(name), row, col)}')
-                
-                value = index_broadcasted(self.evaluated_params.get(name), row, col) or \
-                        self.literal_params.get(name) or \
-                        self.src_params[name].default
-                
-                params[name] = value
-                
-            return params
-                    
+               
+            value = first_valid(
+                    index_broadcasted(self.evaluated_params.get(param_name), row, col),
+                    self.literal_params.get(param_name)
+                    )        
+            return value
+                  
         def display_error_geom(self):
             ''' Generate text geometry showing the content of self.__errors'''
             # Written by Claude-4-5-sonnet, with minor modifications
@@ -760,13 +818,15 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                       self.__errors)))
             print(f"{'='*50}\n")
         
-        def insert_labeled_variant(self, params, trans=pya.Trans(0, 0), align=None):
+        def insert_labeled_variant(self, params, trans=pya.Trans(0, 0), align=None, label_offset=None, text_height=None):
             '''Inserts an labeled variant of the underlying PCell with the given parameters.
-            
--           align: 'UR', 'UL', 'BR', 'BL', or 'C'. If given, aligns the specified corner of the instance's bbox to the origin. 
+
 -           trans: pya.Trans If given, the transformation is applied after alignment
+-           align: 'UR', 'UL', 'BR', 'BL', or 'C'. If given, aligns the specified corner of the instance's bbox to the origin.
+-           label_offset: pya.Point or pya.Vector or (x, y) tuple. If given, used to offset the label position from the anchor position specified by *self._label_anchor*.
 
             Returns the instance from self.cell.insert.'''
+            dbu = self.layout.dbu
             # TODO: Multiple copies! 
             # TODO: Make it possible to use an existing cell instance in the layout,
             # using *change_pcell_parameters* creating new instances through add_pcell_variant,
@@ -780,8 +840,14 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             labeled_variant.insert(pya.CellInstArray(variant_cell, pya.Trans(0, 0)))
                         
             # Add label for the variant
-            label = self.create_label(params, variant_cell.bbox())
+            label_offset = pya.Vector(0, 0) if label_offset is None else pya.Vector(as_point(label_offset))
+            label_anchor = get_bbox_point(self._label_anchor, labeled_variant.bbox())
+            text_center = label_anchor + label_offset
+            text_height = self.get_value('_label_height') if text_height is None else text_height
+            label = self.create_label(params, text_center, text_height)
             labeled_variant.shapes(self._l_label_layer).insert(label)
+            
+            
 
             if align:            
                 anchor = pya.Vector(get_bbox_point(align, labeled_variant.bbox()))
@@ -805,7 +871,8 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             #         converter = get_converter(param_type)
             #         typed_params[param_name] = converter(value)
 
-            
+
+            # Create cell in the main layout
             pcell_var_id = self.layout.add_pcell_variant(self.src_lib,
                                                 self.src_pcell_decl.id(), 
                                                 typed_params)
@@ -841,44 +908,30 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             def __missing__(self, key):
                 self.missing_keys.add(key)
                 return '{' + key + '??}'
- 
-        def create_label(self, params, bbox):
-            '''Creates a text label for an variant in the sweep, with the given parameters and position as a pya.Region.
-            Text will be a region of polygons in the layout. It will be positioned based on *self._label_anchor*
-            and text postion offset parameters, using the provided bbox.
+  
+        def create_label(self, params, text_pos, text_height) -> pya.Region:
+            '''Creates and returns a text label for an variant in the sweep, as a pya.Region.
             
 -           params: dict of {param_name: value} for the parameters of the underlying PCell instance that this label is annotating, used to fill in the _format_str for the label text
--           bbox: bbox of the object to label, or the object with a bbox() getter.
+-           text_pos: where to place the center of the text bonding box (pya.Point, pya,Vector, or (x, y) tuple in dbu)
+-           text_height: Text height in microns for the label
             
-            Returns the Region object containing the text label.
+            Returns the text as a pya.Region of polygons.
             '''
             dbu = self.layout.dbu
             
             # Checking:
-            # bbox
-            if not isinstance(bbox, pya.Box):
-                try:
-                    bbox = bbox.bbox()
-                except Exception:
-                    raise TypeError('bbox must be a pya.Box or an object that has a bbox') from None
+            text_pos = as_point(text_pos)
             
             # Parse format str with the given params
             #   Makes sure floats are displayed without trailing zeros, and with no more than 3 significant digits:
             formatted_params = self.__format_params(params)
             text = self._format_str.format_map(self.SoftReplace(formatted_params))
             
-            # Position it          
-            _label_anchor = get_bbox_point(self._label_anchor, bbox)
-            x_offset = int(self.evaluated_params['_label_x'] / dbu)
-            y_offset = int(self.evaluated_params['_label_y'] / dbu)
-            offset = pya.Vector(x_offset, y_offset)
-            pos = _label_anchor + offset # where to place the center of the text bonding box
-            
             # Create text as polygons
-            
-            text_region = create_text(text, self.evaluated_params['_label_height'], dbu, 
+            text_region = create_text(text, text_height, dbu, 
                                       trans=pya.Trans(rot = self._label_rot), # 0, 1, 2, 3 rotation convention
-                                      pos=pos) 
+                                      pos=text_pos) 
             
             return text_region
         
