@@ -31,9 +31,10 @@ PCELLS = {
 # 'python module name' : 'pcell class name'
   'HEMT': 'HEMT',
   'parr_text': 'ParrText',
-  'HEMT_Array': 'HEMT_Array'
+  'HEMT_Array': 'HEMT_Array',
+  'CircularHEMT': 'CircularHEMT'
 }
-OTHER_MODULES = ['ParamSweep']
+OTHER_MODULES = ['ParamSweep', 'pya_helpers']
 
 class MyLib(pya.Library):
     def __init__(self):
@@ -46,10 +47,12 @@ class MyLib(pya.Library):
               old_lib.delete()
               print(f"Deleted old library: {LIB_NAME}")
           
+          # Reload python module dependencies:
+          reload_modules(OTHER_MODULES)
+          
           # Reload the python modules for each PCell
           py_modules = reload_modules(PCELLS.keys())
-          # Reload other python module dependencies:
-          reload_modules(OTHER_MODULES)
+          
           
           # Register the pcells with MyLib
           for module_name, pcell_name in PCELLS.items():
@@ -71,6 +74,13 @@ try:
   print('Attempting to register HEMT_ParamSweep with MyLib:')
   lib.layout().register_pcell('HEMT_Array_ParamSweep', sweep_HEMT_Array())
   pcells.extend(["HEMT_Array_ParamSweep"])
+  
+  
+  sweep_CircularHEMT = custom_sweep_pcell('CircularHEMT', LIB_NAME)
+  print('Attempting to register CircularHEMT_ParamSweep with MyLib:')
+  lib.layout().register_pcell('CircularHEMT_ParamSweep', sweep_CircularHEMT())
+  pcells.extend(["CircularHEMT_ParamSweep"])
+  
 except Exception as e:
   print(f'custom_sweep_pcell error: \n{traceback.format_exc()}')
 
