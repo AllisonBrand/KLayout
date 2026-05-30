@@ -15,16 +15,16 @@ class CircularHEMT(pya.PCellDeclarationHelper):
             super().__init__()
         
             # Declare parameters
-            self.param("SG_sep", self.TypeDouble, "Source-Gate Separation (um)", default=1)
-            self.param("gate_len", self.TypeDouble, "Gate Length (um)", default=1)
-            self.param("DG_sep", self.TypeDouble, "Drain-Gate Separation (um)", default=5)
-            self.param("drain_rad", self.TypeDouble, "Drain Pad Radius (um)", default=50)
-            self.param("gate_rad", self.TypeDouble, "Gate Pad Radius (um)", default=50)
-            self.param("source_width", self.TypeDouble, "Source Pad Width (um)", default=50)
-            self.param("rounding", self.TypeDouble, "Corner Rounding Radius (um)", default=10)
-            self.param("slot_width", self.TypeDouble, "Width of Slot in Source Pad (um)", default=10)
-            self.param("gate_connector_width", self.TypeDouble, "Width of Gate through Slot in Source Pad (um)", default=5)
-            self.param("text_height", self.TypeDouble, "Text Height (um)", default=25)
+            self.param("SG_sep", self.TypeDouble, "Source-Gate Separation (µm)", default=1)
+            self.param("gate_len", self.TypeDouble, "Gate Length (µm)", default=1)
+            self.param("DG_sep", self.TypeDouble, "Drain-Gate Separation (µm)", default=5)
+            self.param("drain_rad", self.TypeDouble, "Drain Pad Radius (µm)", default=50)
+            self.param("gate_rad", self.TypeDouble, "Gate Pad Radius (µm)", default=50)
+            self.param("source_width", self.TypeDouble, "Source Pad Width (µm)", default=50)
+            self.param("rounding", self.TypeDouble, "Corner Rounding Radius (µm)", default=10)
+            self.param("slot_width", self.TypeDouble, "Width of Slot in Source Pad (µm)", default=10)
+            self.param("gate_connector_width", self.TypeDouble, "Width of Gate through Slot in Source Pad (µm)", default=5)
+            self.param("text_height", self.TypeDouble, "Text Height (µm)", default=25)
             self.param("num_points", self.TypeInt, "Number of Points to Resolve a Circle", default=64)
              
             # Internal Variables: 

@@ -83,14 +83,14 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 self.param("__sweep_header", self.TypeNone, " Sweep Configuration ".center(32, '═')) # Just holds the section header in the GUI.
                 self.param("_row_sweep", self.TypeString, "Define Row Sweep", default='') # sep_GD: 1, 2, 3
                 self.param("_col_sweep", self.TypeString, "Define Col Sweep", default='') # gate_len: 0.5, 1, 2
-                self.param("_row_pad", self.TypeString, "Row Padding (µm)", default    = self.wrapper_defaults['_row_pad'])
-                self.param("_col_pad", self.TypeString, "Column Padding (µm)", default = self.wrapper_defaults['_col_pad'])
+                self.param("_row_pad", self.TypeString, "Row Padding (µm)", default    = str(self.wrapper_defaults['_row_pad']))
+                self.param("_col_pad", self.TypeString, "Column Padding (µm)", default = str(self.wrapper_defaults['_col_pad']))
 
                 # Labeling
                 self.param("__label_header", self.TypeNone, " Labeling ".center(32, '═')) # Just holds the section header in the GUI.
                 self.param("_format_str", self.TypeString, "Label Format", default="GS:{sep_SG}, G:{gate_len}, GD:{sep_GD}")
                 self.param("_l_label", self.TypeLayer, "Label Text Layer", default=pya.LayerInfo(1, 0))
-                self.param("_label_height", self.TypeString, "Label Height (µm)", default = self.wrapper_defaults['_label_height'])
+                self.param("_label_height", self.TypeString, "Label Height (µm)", default = str(self.wrapper_defaults['_label_height']))
                 self.param("_label_rot", self.TypeInt, "Label Rotation", default=0, choices=[('0°', 0), ('90°', 1),  ('180°', 2), ('270°', 3)])
                 self.param("_label_x", self.TypeString, "Label X Offset (µm)", default='0.0')
                 self.param("_label_y", self.TypeString, "Label Y Offset (µm)", default='0.0')
@@ -136,6 +136,22 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 print(f"Copied parameters into '{source_pcell_name}_ParamSweep wrapper: {list(self.src_params.keys())}")   
                 print(f'{self._expr_param_types=}')
                 
+                
+                # ============= Duplicates Array ============= 
+                self.param("__dup_header", self.TypeNone, " Duplicates Array ".center(32, '═')) # Just holds the section header in the GUI.
+                self.param("__dup_desc", self.TypeNone, "WIDTH and HEIGHT are optional keywords that represent the dimensions "
+                           "of one instance of the underlying PCELL once drawn.") # Holds descriptive text in the GUI.
+                
+                # Parameters to define array of duplicates
+                self.param("_row_space", self.TypeString, "Row Spacing (µm)", default="HEIGHT + 10")
+                self.param("_col_space", self.TypeString, "Column Spacing (µm)", default="WIDTH + 10")
+                self.param("_stagger", self.TypeString, "Stagger (µm), applied to every second row", default="0")
+
+                # These param can accept expressions.
+                # Record that they need to be evaluated to TypeDouble:
+                for param_name in ('_row_space', '_col_space', '_stagger'):
+                    self._expr_param_types[param_name] = self.TypeDouble
+                
                 # Messaging the user
                 self.param("_msg", self.TypeString, "Messages:", default="", readonly=True) # For errors and warnings
                 
@@ -172,14 +188,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 # Make sure that _row_pad is either scalar or only depends on the row sweep.
                 # Same for _col_pad.
                 self.validate_row_col_pads()
-                
-                #  DEBUG !!!!
-                print(f"{self._label_x=}")
-                print(f"{self._label_y=}")
-                print(f"{self.evaluated_params['_label_x']=}")
-                print(f"{self.evaluated_params['_label_y']=}")
-                print(f"{self.get_value('_label_x')=}")
-                print(f"{self.get_value('_label_y')=}")
                 
                 # Check if the label _format_str references valid parameters 
                 # from the underlying PCell, and raise ValueError if it doesn't.
@@ -1057,8 +1065,8 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             # dictionary for easy access when generating the sweep:
             self.src_params[param_decl.name] = param_decl
             
-            print(f'Copied param: {name} as type {PARAM_TYPES[type_code]} with default {default!r}')
-            print(f'Current Value: {name} = {getattr(self, name)}')
+            # print(f'Copied param: {name} as type {PARAM_TYPES[type_code]} with default {default!r}')
+            # print(f'Current Value: {name} = {getattr(self, name)}')
         
         def _pcell_from_lib(self, source_pcell_name, lib_name):
             '''Find the target PCell declaration in the given library.

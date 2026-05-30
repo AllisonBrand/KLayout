@@ -34,13 +34,44 @@ class Template(pya.PCellDeclarationHelper):
         """
         Called before display_text_impl and produce_impl.
         """
+        # Reset:
+        self.__err_msg = ''
+        
         try:
-                pass
+            pass
         except Exception as e:
             print(f"Error in Template coerce_parameters_impl: \n{traceback.format_exc()}")
             self.__err_msg += f"coerce_parameters_impl: {e}\n"
 
+    def produce_impl(self):
+    
+        """
+        Implementation of the PCell interface: generates the layouts
+        """
+        dbu = self.layout.dbu
+        try: 
+            
+            # ------- Create Layers -------------
+            #   Mesa etch (inverse)
+            mesa_layer = self.layout.layer(1, 0, "mesa")
+            #   S, D contacts
+            contacts   = self.layout.layer(2, 0, "contacts")
+            #   Gate pads and finger
+            gate_pads  = self.layout.layer(3, 0, "gate_pads")
 
+
+            # Create copies of all the dimensions in database units for easier use in layout generation
+            sep_GD = self.sep_GD / self.layout.dbu
+            sep_SG = self.sep_SG / self.layout.dbu
+
+            # ------- Draw Template -------------
+            
+                
+        except Exception as e:
+            print(f"produce_impl error error: \n{traceback.format_exc()}")
+            self.__err_msg += f"produce_impl error: {e}\n"
+            # Insert a default shape to prevent empty cell
+            self.cell.shapes(self.layout.layer(0, 0)).insert(pya.Box(0, 0, 100/dbu, 100/dbu))
 
     def display_text_impl(self):
         """
@@ -94,35 +125,3 @@ class Template(pya.PCellDeclarationHelper):
             self.__err_msg += f"transformation_from_shape_impl: {e}\n"
             return pya.Trans()
         
-        
-        
-    
-    def produce_impl(self):
-    
-        """
-        Implementation of the PCell interface: generates the layouts
-        """
-        dbu = self.layout.dbu
-        try: 
-            
-            # ------- Create Layers -------------
-            #   Mesa etch (inverse)
-            mesa_layer = self.layout.layer(1, 0, "mesa")
-            #   S, D contacts
-            contacts   = self.layout.layer(2, 0, "contacts")
-            #   Gate pads and finger
-            gate_pads  = self.layout.layer(3, 0, "gate_pads")
-
-
-            # Create copies of all the dimensions in database units for easier use in layout generation
-            sep_GD = self.sep_GD / self.layout.dbu
-            sep_SG = self.sep_SG / self.layout.dbu
-
-            # ------- Draw ParrText -------------
-            
-                
-        except Exception as e:
-            print(f"produce_impl error error: \n{traceback.format_exc()}")
-            self.__err_msg += f"produce_impl error: {e}\n"
-            # Insert a default shape to prevent empty cell
-            self.cell.shapes(self.layout.layer(0, 0)).insert(pya.Box(0, 0, 100/dbu, 100/dbu))
