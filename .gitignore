@@ -6,8 +6,10 @@
 !/pymacros/
 
 # Except for 
-python/__pycache__
+python/__pycache__*
+*.pyc
 python/ParamSweep_old.py
+python/fix.py
 
 # 3. Re-include the .gitignore file itself (optional but recommended)
 !.gitignore

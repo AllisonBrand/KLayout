@@ -21,7 +21,8 @@ import sys
 import traceback
 
 from dev_reload import reload_modules
-from ParamSweep import custom_sweep_pcell
+import ParamSweep
+import Sweep
 
 
 
@@ -34,7 +35,7 @@ PCELLS = {
   'HEMT_Array': 'HEMT_Array',
   'CircularHEMT': 'CircularHEMT'
 }
-OTHER_MODULES = ['ParamSweep', 'pya_helpers']
+OTHER_MODULES = ['ParamSweep', 'Sweep', 'pya_helpers', 'general_helpers']
 
 class MyLib(pya.Library):
     def __init__(self):
@@ -70,13 +71,13 @@ pcells = list(PCELLS.keys())
 
 # Use wrapper PCell ParamSweep:
 try: 
-  sweep_HEMT_Array = custom_sweep_pcell('HEMT_Array', LIB_NAME)
-  print('Attempting to register HEMT_ParamSweep with MyLib:')
+  sweep_HEMT_Array = ParamSweep.custom_sweep_pcell('HEMT_Array', LIB_NAME)
+  print('Attempting to register HEMT_Array_ParamSweep with MyLib:')
   lib.layout().register_pcell('HEMT_Array_ParamSweep', sweep_HEMT_Array())
   pcells.extend(["HEMT_Array_ParamSweep"])
   
   
-  sweep_CircularHEMT = custom_sweep_pcell('CircularHEMT', LIB_NAME)
+  sweep_CircularHEMT = Sweep.custom_sweep_pcell('CircularHEMT', LIB_NAME)
   print('Attempting to register CircularHEMT_ParamSweep with MyLib:')
   lib.layout().register_pcell('CircularHEMT_ParamSweep', sweep_CircularHEMT())
   pcells.extend(["CircularHEMT_ParamSweep"])

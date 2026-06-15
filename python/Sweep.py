@@ -1,59 +1,42 @@
+# Recreating ParamSweep as a subclass of Wrapper, because the current implentation is > 1200 lines in one file.
+# As of 6-12-2026, new features will be added here, not to ParamSweep.
+
 import pya
 from datetime import datetime
 import traceback
 import ast
-import operator
 import re
 import numpy as np
-import warnings
-# from string.templatelib import Interpolation, Template
 
-# TODO: Better-looking display for evaluated row, col, matrix expressions
-# TODO: Multiple copies of each variant
-
-from pya_helpers import create_text, get_bbox_point, as_point, get_converter, is_valid_param_type, is_numeric_param_type, PARAM_TYPES
-from general_helpers import parse_range, UserInputError, first_valid
+from pya_helpers import create_text, get_bbox_point, as_point, get_converter, is_numeric_param_type, PARAM_TYPES
+from general_helpers import safe_eval, parse_range, UserInputError, first_valid
 from DependencyGraph import DependencyGraph
-    
+from pcell_wrapper import Wrapper
+
 def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=False) -> pya.PCellDeclarationHelper:
     '''Defines a custom PCell that wraps the given target PCell. The custom PCell helps the user create a parametric 
     sweep of parameters in the underlying PCell as an array of labeled variations. 
     
     Exposes the parameters of the underlying PCell, with added array and labeling functionality.
--    source_pcell_name: The name of the PCell to create this ParamSweep wrapper around.  
+-    source_pcell_name: The name of the PCell to create this Sweep wrapper around.  
 -    lib_name: The name of the library containing the target pcell. 
 -    use_existing: If true, will search the currently active layout for an existing cell with the given target cell name. This cell will define the default parameter vaules for the wrapper PCell.
     '''
         
-    class ParamSweep(pya.PCellDeclarationHelper):
+    class Sweep(Wrapper):
         """
         Wrapper for PCells that creates an array of labeled variations of the underlying PCell (a parametric sweep).
         
         User can define a row sweep and a column sweep. A sweep can each be defined using any one parameter of the underlying PCell. 
         params that are not explicitly swept can be given as expressions of the swept parameters
-        """  # TODO Currently, only numeric params can be given as expressions, boolean expressions would be nice too.
-        # Parameters that can be given as expressions must be made to accept TypeString, instead of the expected param type.
-        # That means they lose KLayout's automatic type-checking and formatting. 
-        # If the user defines a sweep with a param that is not exposed as TypeString, then I can't update the input box 
-        # in the underlying PCell params section to say (for example) 'row_swept', and the value there will silently ignored.
-        def __init__(self):  
-            """ Constructor: provides the PCell parameter definitions. """
+        """ 
+        
+        def __init__(self):
             try: 
-                print(f'Called {source_pcell_name}_ParamSweep.__init__()')
-                super().__init__()
+                print(f'Called {source_pcell_name}_Sweep.__init__()')
+                # Initialize Wrapper: finds the underlying PCell declaration and its parameters
+                super().__init__(source_pcell_name, lib_name, expose_params=False)
                 
-                # Get the underlying PCell
-                pcell_decl, lib = self._pcell_from_lib(source_pcell_name, lib_name)
-                param_values = self._details_from_layout(source_pcell_name) if use_existing else None # TODO expand on and test use_existing features
-                # Unfortunately, there is no way to get the library object from a PCell instance, 
-                # so the user has to provide it even if they have an existing cell instance.
-                
-                # Internal Variables: 
-                #   params that are not explicitly swept can be given as expressions using the swept parameters
-                #   
-                self.src_pcell_decl = pcell_decl  #  PCell declaration of the underlying (source) PCell
-                self.src_lib = lib #  library object of the underlying PCell
-                self.src_params = {} # will be filled with parameter declarations of the underlying PCell.
                 # Each value in evaluated_params should be stored in a np.ndarry whose shape indicates whether it is a row sweep, col sweep, matrix, or scalar:
                 self.evaluated_params = {} # {param_name: value(s)_evaluated_in_the_correct_type}, values stored as np.ndarray
                 self._expr_param_types = {} # {param_name: required type code} for params whose values may be given as expressions
@@ -63,18 +46,11 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 self._dependency_graph = DependencyGraph() # tracks which params depend on which
                 self.n_rows = self.n_cols = 1
                 
-                # Collect errors and warnings
-                self.__errors = [] # Exception Objects
+                # Collect warnings (Wrapper class already defines self.__errors and display_error_geom for error reporting)
                 self.__warnings = [] # String warnings to user
-
-                # Cache for detecting changes
-                self.__prev = None # TODO: actually use this?
                 
-                # TODO: Add nice defaults for _row_sweep and _col_sweep. Discovery of source param decls must happen first. 
-                # TODO:  Make ParamSweep a child class of Wrapper. Will help with ^^
-                
-                # I added "_" before every paramter name to reduce the risk that any underlying PCell params get overriden.
-                
+                # I added "_" before every parameter name belonging to the wrapper PCell to reduce the risk that any underlying PCell params get overriden.
+                                
                 self.wrapper_defaults = {'_row_pad': 100.0,
                                          '_col_pad': 100.0,
                                          '_label_height': 30.0}
@@ -88,7 +64,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
 
                 # Labeling
                 self.param("__label_header", self.TypeNone, " Labeling ".center(32, '═')) # Just holds the section header in the GUI.
-                self.param("_format_str", self.TypeString, "Label Format", default="GS:{sep_SG}, G:{gate_len}, GD:{sep_GD}")
+                self.param("_format_str", self.TypeString, "Label Format", default="Label Here") # TODO: Good defaults: GS:{sep_SG}, G:{gate_len}, GD:{sep_GD}
                 self.param("_l_label", self.TypeLayer, "Label Text Layer", default=pya.LayerInfo(1, 0))
                 self.param("_label_height", self.TypeString, "Label Height (µm)", default = str(self.wrapper_defaults['_label_height']))
                 self.param("_label_rot", self.TypeInt, "Label Rotation", default=0, choices=[('0°', 0), ('90°', 1),  ('180°', 2), ('270°', 3)])
@@ -103,74 +79,30 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 for param_name in ('_row_pad', '_col_pad', '_label_height', '_label_x', '_label_y'):
                     self._expr_param_types[param_name] = self.TypeDouble
                 
-                # ============= Underlying PCell parameters ============= 
+                # Underlying PCell parameters 
+                self.expose_src_params()
                 
-                self.param("__params_header", self.TypeNone, f" {source_pcell_name} ".center(32, '═')) # Just holds the section header in the GUI.
-                
-                # Expose parameters of the underlying PCell for user input
-                #    i.e. copy over each parameter in the underlying PCell 
-                #    by defining a parameter with the same attributes in this wrapper PCell.
-                
-                for param_decl in pcell_decl.get_parameters():
-                    
-                    # If we were able to get actual parameter values from an existing cell instance in the layout, 
-                    # use those as the defaults in the wrapper PCell, so that the initial generated layout will match the existing cell instance. If not, just use the default values from the underlying PCell.
-                    if param_values:
-                        param_decl.default = param_values.get(param_decl.name) 
-                        
-                    # Allow for expressions for numerical parameters that are not set with a drop down menu:
-                    # - the input type and default value must be changed to TypeString
-                    has_drop_down = len(param_decl.choice_values()) > 0
-                    type_code = param_decl.type
-                    default = None
-                    if is_numeric_param_type(param_decl.type) and not has_drop_down:
-                        type_code = self.TypeString
-                        default = str(param_decl.default)
-                        # Store this param's name in a list of parameters which will need evaluating.
-                        self._expr_param_types[param_decl.name] = param_decl.type
-                    
-                    
-                    # Copy parameter to this wrapper PCell
-                    self.__copy_param(param_decl, default=default, type_code=type_code)  # also adds parameter declaration to self.src_params
-                    
-                print(f"Copied parameters into '{source_pcell_name}_ParamSweep wrapper: {list(self.src_params.keys())}")   
+                # Expression parameters are currently supported for numerical types that 
+                # are not set with a drop down menu.
+                # At this point, self._expr_param_types should contain the name and desired type 
+                # for any such parameters defined in the underlying PCell and the wrapper PCell.
                 print(f'{self._expr_param_types=}')
                 
-                # # ============= Duplicates Array ============= 
-                # self.param("__dup_header", self.TypeNone, " Duplicates Array ".center(32, '═')) # Just holds the section header in the GUI.
-                # self.param("__dup_desc", self.TypeNone, "WIDTH and HEIGHT are optional keywords that represent the dimensions "
-                #            "of one instance of the underlying PCELL once drawn.") # Holds descriptive text in the GUI.
-                
-                # # Parameters to define array of duplicates
-                # self.param("_n_rows_dup", self.TypeInt, "# of Rows for Duplicates Array", default=3)
-                # self.param("_n_cols_dup", self.TypeInt, "# of Columns for Duplicates Array", default=3)
-                # self.param("_row_space", self.TypeString, "Row Spacing (µm)", default="HEIGHT + 10")
-                # self.param("_col_space", self.TypeString, "Column Spacing (µm)", default="WIDTH + 10")
-                # self.param("_stagger", self.TypeString, "Stagger (µm), a Δx applied to every second row", default="0")
-                # # TODO: NEEDS VERSION numbers to avoid breaking existing HEMT ParamSweep!!
-
-                # # These param can accept expressions.
-                # # Record that they need to be evaluated to TypeDouble:
-                # for param_name in ('_row_space', '_col_space', '_stagger'):
-                #     self._expr_param_types[param_name] = self.TypeDouble
-                
-                
-                # ============= Messaging the user ============= 
+                # Messaging the user 
                 self.param("_msg", self.TypeString, "Messages:", default="", readonly=True) # For errors and warnings
                 
-                print(f'Initialized an instance of {source_pcell_name}_ParamSweep() at {datetime.now()}')
+                # Finished!
+                print(f'Initialized an instance of {source_pcell_name}_Sweep() at {datetime.now()}')
+                
             except Exception as e:
-                print(f"Error in {source_pcell_name}_ParamSweep __init__: \n{traceback.format_exc()}")
-        
-        # TODO: Warnings if 
-        # -  Label _format_str references scalar paramters.
-        
+                print(f"Error in {source_pcell_name}_Sweep __init__: \n{traceback.format_exc()}")
+                             
         def coerce_parameters_impl(self):
             """
             Called before display_text_impl and produce_impl.
             """
             # TODO: Finish implementing error messages to the user for bad input in GUI window?
-            print(f'Called {source_pcell_name}_ParamSweep.coerce_parameters_impl()')
+            print(f'Called {source_pcell_name}_Sweep.coerce_parameters_impl()')
            
             # Clear whenever restarting from coerce_parameters_imp:
             self.evaluated_params = {}
@@ -204,7 +136,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 if self.__errors:
                     # Print all errors to the console
                     for err in self.__errors:
-                        print(f"Error in {source_pcell_name}_ParamSweep coerce_parameters_impl:")
+                        print(f"Error in {source_pcell_name}_Sweep coerce_parameters_impl:")
                         traceback.print_exception(err)
                     
                     # Add the errors to self._msg, so the user can see them in the GUI
@@ -217,9 +149,9 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                                 '\n  • '.join(self.__warnings)
             
             except Exception as e:
-                print(f"Error in {source_pcell_name}_ParamSweep coerce_parameters_impl, when trying to print other errors:")
+                print(f"Error in {source_pcell_name}_Sweep coerce_parameters_impl, when trying to print other errors:")
                 traceback.print_exception(e)
-                    
+      
         def produce_impl(self):
             """
             Implementation of the PCell interface: generates the layouts.
@@ -234,10 +166,9 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             dbu = self.layout.dbu
             
             try:
-                
+
                 # If there are errors, show them instead of generating the geometery
                 if self.__errors: raise Exception("Prior Errors. Cannot generate geometry.")
-                    
                     
                 # =========================== Generate Geometery ===========================
                              
@@ -292,8 +223,63 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     self.display_error_geom()
                 except Exception:
                     # Insert a default shape to prevent empty cell
-                    self.cell.shapes(self.layout.layer(0, 0)).insert(pya.Box(0, 0, 100/dbu, 100/dbu))
+                    self.cell.shapes(self.layout.layer(999, 0)).insert(pya.Box(0, 0, 100/dbu, 100/dbu)) # Layer 999 is for error geometry
+
+        def display_text_impl(self):
+            """
+            PCell interface implementation
+            """
+            if self.__errors:
+                    text = f'{source_pcell_name}_ParamSweep ({len(self.__errors)} error(s) - check console")'
+                    print(f'{source_pcell_name}_ParamSweep instance display_text called: ' + text)
+                    return text
+            
+            # If there are no errors:
+            try: 
+                text = f'{source_pcell_name}_ParamSweep({self.n_rows}x{self.n_cols})'
+                print(f'{source_pcell_name}_ParamSweep instance display_text called: ' + text)
+
+            except Exception as e:
+                print(f"Error in display_text_impl: \n{traceback.format_exc()}")
+                text = f'{source_pcell_name}_ParamSweep (?)'
+
+            return text
                 
+        def expose_src_params(self):
+            '''Exposes the parameters of the underlying PCell in the GUI by copying them into this wrapper PCell.
+            
+            To allow for expressions, converts the input type and default value to TypeString for numerical parameters that are not set with a drop down menu.
+            '''
+            self.param("__params_header", self.TypeNone, f" {source_pcell_name} ".center(32, '═')) # Just holds the section header in the GUI.
+                
+            # Expose parameters of the underlying PCell for user input
+            #    i.e. copy over each parameter in the underlying PCell 
+            #    by defining a parameter with the same attributes in this wrapper PCell.
+            
+            for param_decl in self.src_pcell_decl.get_parameters():
+                # TODO Implement this?
+                # # If we were able to get actual parameter values from an existing cell instance in the layout, 
+                # # use those as the defaults in the wrapper PCell, so that the initial generated layout will match the existing cell instance. If not, just use the default values from the underlying PCell.
+                # if self.param_values:
+                #     param_decl.default = self.param_values.get(param_decl.name) 
+                    
+                    
+                # Allow for expressions for numerical parameters that are not set with a drop down menu:
+                # -> the input type and default value must be changed to TypeString
+                has_drop_down = len(param_decl.choice_values()) > 0
+                type_code = param_decl.type
+                default = param_decl.default
+                if is_numeric_param_type(param_decl.type) and not has_drop_down:
+                    type_code = self.TypeString
+                    default = str(default)
+                    # Store this param's name in a list of parameters which will need evaluating.
+                    self._expr_param_types[param_decl.name] = param_decl.type
+                
+                # Copy parameter to this wrapper PCell
+                self._copy_param(param_decl, default=default, type_code=type_code)  # also adds parameter declaration to self.src_params
+                    
+            print(f"Copied parameters into '{source_pcell_name}_Sweep wrapper: {list(self.src_params.keys())}")
+           
         def parse_and_validate_sweeps(self):
             '''Parse the row and column sweep specifications into param_name and values.
             
@@ -389,17 +375,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 if changed_sweep and prev_was_string:
                     setattr(self, prev, str(self.src_params[prev].default))
 
-        def validate_label_fstring(self):
-            '''
-            Check if the label _format_str references valid parameters 
-            from the underlying PCell, and raise ValueError if it doesn't.
-            '''
-            validator = self.NoteMissingKeys(self.src_params.keys())
-            self._format_str = self._format_str.format_map(validator)
-            if validator.missing_keys: # The set of keys that were referenced in _format_str but not found in the underlying PCell parameters. Warn the user about these.
-                raise ValueError(f"Label format string references parameters that are not in the underlying PCell: {validator.missing_keys}. " +
-                                    f"Invalid names are marked with '??' in the label text.")
-
         def validate_row_col_pads(self):
             ''' Make sure that _row_pad is either scalar or only depends on the row sweep.
                 Same for _col_pad.'''
@@ -423,6 +398,47 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     setattr(self, '_row_pad', str(row_pad)) # Reset in GUI too.
                     self.__warnings.append("Col Pad must be either scalar or be the same shape as col sweep. "
                                             f"Reseting to {col_pad} um.")
+
+        def validate_label_fstring(self):
+            '''
+            Check if the label _format_str references valid parameters 
+            from the underlying PCell, and raise ValueError if it doesn't.
+            '''
+            validator = self.NoteMissingKeys(self.src_params.keys())
+            self._format_str = self._format_str.format_map(validator)
+            if validator.missing_keys: # The set of keys that were referenced in _format_str but not found in the underlying PCell parameters. Warn the user about these.
+                raise ValueError(f"Label format string references parameters that are not in the underlying PCell: {validator.missing_keys}. " +
+                                    f"Invalid names are marked with '??' in the label text.")
+ 
+        class SoftReplace(dict):
+            '''Helper class for soft replacement in a format string,
+            so missing keys are left in the format string with '??' rather than throwing an error.'''
+            def __missing__(self, key):
+                print(f"Warning: parameter '{key}' not found for labeling. Leaving as is in the label text with '??'.")
+                return '{' + key + '??}'
+            
+            def __getitem__(self, key):
+                # Ignore '??' or '!!' annotations when checking key validity
+                return super().__getitem__(key.rstrip('?!'))
+
+        class NoteMissingKeys(dict):
+            '''Helper class records missing keys, so that I can 
+            warn the user about them when verifying a format string.
+            Does not replace keys with values, just records which keys are missing and adds '??'
+            to the key in the format string for missing keys.'''
+            def __init__(self, valid_keys):
+                d = {key: '{' + key + '}' for key in valid_keys}
+                super().__init__(d)
+                self.missing_keys = set() 
+                
+            def __getitem__(self, key):
+                # Ignore '??' or '!!' annotations when checking key validity, and
+                # prevent them from piling on if the same missing key is referenced multiple times:
+                return super().__getitem__(key.rstrip('?!'))
+        
+            def __missing__(self, key):
+                self.missing_keys.add(key)
+                return '{' + key + '??}'
 
         def expr_param_names(self, search=False):
             '''Getter for the names of parameters which need to be evaluated as expressions.
@@ -483,7 +499,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                          )
                     
                 expr = self.get_expr(param_name)
-                deps = self._parse_expr_dependencies(expr)
+                deps = self._parse_dependencies(expr)
                 self._dependency_graph.add_dependency(param_name, deps)
                 
             # Determine evaluation order and check that it is acyclic.
@@ -543,7 +559,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 # Attempt to evaluate expr, 
                 # and annotate the content in the GUI input box to show the result
                 try:
-                    value = np.asarray(self._safe_eval(expr, context))
+                    value = np.asarray(safe_eval(expr, context))
                     
                 except Exception as e:
                     # Annotate the string in the input box to show the error
@@ -559,23 +575,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     self.evaluated_params[name] = value
                     # Annotate the string in the input box to show how's interpreted
                     setattr(self, name, expr + f' = {value}')
- 
-        def _parse_expr_dependencies(self, expr):
-            """Extract variable names from expression.
-            Returns a set containing variable names.
-            If it fails to parse, returns an empty set."""            
-            variables = set()
-            
-            try:
-                tree = ast.parse(expr, mode='eval')
-                
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Name):
-                        variables.add(node.id)
-            except:
-                pass
-            
-            return variables
              
         def get_expr(self, param_name):
             '''Gives the expression associated with the given param_name.
@@ -591,7 +590,24 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                         getattr(self, param_name))
             else:
                 raise ValueError(f"{param_name} doesn't have an associated expression")
+            
+        def _parse_dependencies(self, expr):
+            """Extract variable names from expression.
+            Returns a set containing variable names.
+            If it fails to parse, returns an empty set."""            
+            variables = set()
+            
+            try:
+                tree = ast.parse(expr, mode='eval')
                 
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Name):
+                        variables.add(node.id)
+            except:
+                pass
+            
+            return variables
+     
         def _strip_annotation(self, input:str):
             '''
             Strips any " = parsed results" annotation that may have been added 
@@ -617,130 +633,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 
             return expr
         
-        def _safe_eval(self, expr, context, max_depth=100):
-            """Safely evaluate mathematical expression with NumPy array support
-                
-                Args:
-                    expr: Expression string
-                    context: Dict of variables (can contain NumPy arrays or scalars)
-                
-                Returns:
-                    Result (scalar or NumPy array)"""
-            # Allowed operations
-            
-            # Arithmetic
-            ops = {
-                ast.Add: operator.add,
-                ast.Sub: operator.sub,
-                ast.Mult: operator.mul,
-                ast.Div: operator.truediv,
-                ast.FloorDiv: operator.floordiv,
-                ast.Pow: operator.pow,
-                ast.BitXor: operator.pow, # ^ is usually expected to be pow, not xor.
-                ast.Mod: operator.mod,
-                ast.USub: operator.neg,
-                ast.UAdd: operator.pos,
-                ast.Mod: operator.mod
-            }
-            
-            # Comparison 
-            comparison_ops = {
-                ast.Eq: operator.eq,
-                ast.NotEq: operator.ne,
-                ast.Lt: operator.lt,
-                ast.LtE: operator.le,
-                ast.Gt: operator.gt,
-                ast.GtE: operator.ge,
-            }
-            
-            depth_counter = 0
-            
-            def eval_node(node):
-                '''Recursively evaluates ast node'''
-                # Protects against stack overflow from malicious input:
-                nonlocal depth_counter
-                depth_counter += 1
-                if depth_counter > max_depth:
-                    raise RecursionError(f"Expression too complex (>{max_depth} operations)")
-                
-                # Recursively evaluate node:
-                if isinstance(node, ast.Constant): # Number or np.ndarray
-                    return node.value
-                
-                elif isinstance(node, ast.Name):   # Variable
-                    if node.id in context:
-                        value = context[node.id]
-                        # Convert to NumPy array if not already
-                        # This ensures consistent behavior
-                        return np.asarray(value)
-                    else:
-                        raise ValueError(f"Unknown variable: {node.id}")
-                    
-                elif isinstance(node, ast.BinOp):  # Binary operation
-                    if type(node.op) not in ops:
-                        raise ValueError(f"Unsupported operation: {type(node.op)}.__name__")
-                    return ops[type(node.op)](eval_node(node.left), eval_node(node.right))
-                
-                elif isinstance(node, ast.UnaryOp): # Unary operation
-                    if type(node.op) not in ops:
-                        raise ValueError(f"Unsupported operation: {type(node.op).__name__}")
-                    return ops[type(node.op)](eval_node(node.operand))
-                
-                elif isinstance(node, ast.Compare):  # Comparison (e.g., a < b, or chained: a < b < c)
-                    left = eval_node(node.left)
-                    
-                    # For chained comparisons, we need to AND all results
-                    cumulative_result = None
-                    
-                    for op, comparator in zip(node.ops, node.comparators):
-                        right = eval_node(comparator)
-                        
-                        op_type = type(op)
-                        if op_type in comparison_ops:
-                            result = comparison_ops[op_type](left, right)
-                            
-                            # Combine with previous results using AND
-                            if cumulative_result is None:
-                                cumulative_result = result
-                            else:
-                                cumulative_result = np.logical_and(cumulative_result, result)
-                            
-                            # For next comparison in chain: left becomes right
-                            left = right
-                        else:
-                            raise ValueError(f"Unsupported comparison: {op_type.__name__}")
-                        
-                    return cumulative_result
-                
-                else:  # Something else
-                    raise ValueError(f"Unsupported expression type: {type(node)}")
-            
-            try:
-                tree = ast.parse(expr, mode='eval')
-                return np.asarray(eval_node(tree.body))
-            except SyntaxError:
-                raise ValueError(f"Invalid expression syntax: {expr}")
-
-        def display_text_impl(self):
-            """
-            PCell interface implementation
-            """
-            if self.__errors:
-                    text = f'{source_pcell_name}_ParamSweep ({len(self.__errors)} error(s) - check console")'
-                    print(f'{source_pcell_name}_ParamSweep instance display_text called: ' + text)
-                    return text
-            
-            # If there are no errors:
-            try: 
-                text = f'{source_pcell_name}_ParamSweep({self.n_rows}x{self.n_cols})'
-                print(f'{source_pcell_name}_ParamSweep instance display_text called: ' + text)
-
-            except Exception as e:
-                print(f"Error in display_text_impl: \n{traceback.format_exc()}")
-                text = f'{source_pcell_name}_ParamSweep (?)'
-
-            return text
-       
         def params_at_index(self, row:int, col:int):
             '''Returns dict of all the params for this index as {param_name: value}'''            
             params = {}
@@ -806,29 +698,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     self.literal_params.get(param_name)
                     )        
             return value
-                  
-        def display_error_geom(self):
-            ''' Generate text geometry showing the content of self.__errors'''
-            # Written by Claude-4-5-sonnet, with minor modifications
-            
-            error_text = "ERRORS:\n  • " + "\n  • ".join(map(str, self.__errors))
-        
-            text_region = create_text(
-                error_text,
-                height_um=10.0,
-                dbu=self.layout.dbu,
-                pos=pya.Point(0, 0)
-            )
-            
-            error_layer = self.layout.layer(999, 0)
-            self.cell.shapes(error_layer).insert(text_region)
-            
-            print(f"\n{'='*50}")
-            print("PCELL PARAMETER ERRORS:")
-            print("ERRORS:\n" + "\n\n".join(
-                  map(lambda err: ''.join(traceback.format_exception(err)),
-                      self.__errors)))
-            print(f"{'='*50}\n")
         
         def insert_labeled_variant(self, params, trans=pya.Trans(0, 0), align=None, label_offset=None, text_height=None):
             '''Inserts an labeled variant of the underlying PCell with the given parameters.
@@ -838,7 +707,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
 -           label_offset: pya.Point or pya.Vector or (x, y) tuple. If given, used to offset the label position from the anchor position specified by *self._label_anchor*.
 
             Returns the instance from self.cell.insert.'''
-            dbu = self.layout.dbu
             # TODO: Multiple copies! 
             # TODO: Make it possible to use an existing cell instance in the layout,
             # using *change_pcell_parameters* creating new instances through add_pcell_variant,
@@ -859,68 +727,12 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             label = self.create_label(params, text_center, text_height)
             labeled_variant.shapes(self._l_label_layer).insert(label)
             
-            
-
             if align:            
                 anchor = pya.Vector(get_bbox_point(align, labeled_variant.bbox()))
                 trans.disp = trans.disp - anchor
             
             return self.cell.insert(pya.CellInstArray(labeled_variant, trans))
-        
-        # def insert_cell(self, cell, into=None)
-                
-        def create_variant(self, params):
-            '''Create a variant of underlying PCell as a cell in the main layout, and 
-            return the cell object'''
-            # Create cell in the main layout
-            print('create_variant called with params: ', params)
-            
-            #  Checking, shouldn't be necessary
-            typed_params = params.copy()
-            # for param_name, value in params.items():
-            #     if param_name in self.src_params.keys():
-            #         param_type = self.src_params[param_name].type
-            #         converter = get_converter(param_type)
-            #         typed_params[param_name] = converter(value)
-
-
-            # Create cell in the main layout
-            pcell_var_id = self.layout.add_pcell_variant(self.src_lib,
-                                                self.src_pcell_decl.id(), 
-                                                typed_params)
-            # Fetch and return the cell object
-            return self.layout.cell(pcell_var_id)
- 
-        class SoftReplace(dict):
-            '''Helper class for soft replacement in a format string,
-            so missing keys are left in the format string with '??' rather than throwing an error.'''
-            def __missing__(self, key):
-                print(f"Warning: parameter '{key}' not found for labeling. Leaving as is in the label text with '??'.")
-                return '{' + key + '??}'
-            
-            def __getitem__(self, key):
-                # Ignore '??' or '!!' annotations when checking key validity
-                return super().__getitem__(key.rstrip('?!'))
-
-        class NoteMissingKeys(dict):
-            '''Helper class records missing keys, so that I can 
-            warn the user about them when verifying a format string.
-            Does not replace keys with values, just records which keys are missing and adds '??'
-            to the key in the format string for missing keys.'''
-            def __init__(self, valid_keys):
-                d = {key: '{' + key + '}' for key in valid_keys}
-                super().__init__(d)
-                self.missing_keys = set() 
-                
-            def __getitem__(self, key):
-                # Ignore '??' or '!!' annotations when checking key validity, and
-                # prevent them from piling on if the same missing key is referenced multiple times:
-                return super().__getitem__(key.rstrip('?!'))
-        
-            def __missing__(self, key):
-                self.missing_keys.add(key)
-                return '{' + key + '??}'
-  
+                        
         def create_label(self, params, text_pos, text_height) -> pya.Region:
             '''Creates and returns a text label for an variant in the sweep, as a pya.Region.
             
@@ -963,168 +775,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 
             # TODO: Allow for selection of text alignment (centered, left, etc), 
             # or make it depend on the choice of _label_anchor?
-                
-        # def generate_sweep(self):
-        #     '''Parses the _row_sweep and _col_sweep parameters into a list of dictionaries of parameter values for each variation in the sweep, 
-        #     and a dictionary of the fixed parameters that are not being swept over.
-            
-        #     Returns: (fixed_params, _row_sweep, _col_sweep)
-        #         where fixed_params is a dict of {param_name: value} for the parameters that are not being swept over, 
-        #         and _row_sweep and _col_sweep are lists of dicts of {param_name: value} for each variation in the row and column sweeps, respectively.
-        #     '''
-        #     def dict_zip(sweep_dict):
-        #         '''Converts a dictionary of {param_name: [values]} into a 
-        #         list of dictionaries of {param_name: value} for each iteration.
-                
-        #         For example, {'a': [1, 2], 'b': [3, 4]} would be converted into the sequence: 
-        #         {'a': 1, 'b': 3}, {'a': 2, 'b': 4}
-                
-        #         Returns a list of [{param_name: value}, ...] 
-        #         '''
-        #         # Check for empty sweep_dict:
-        #         if sweep_dict is None or len(sweep_dict) == 0:
-        #             return [{}] 
-                
-        #         # Check that the lists of values in sweep_dict are all the same length:
-        #         lengths = [len(values) for values in sweep_dict.values()]
-        #         if len(set(lengths)) > 1:
-        #             raise ValueError(f"All parameters in a sweep must have the same number of values. Found lengths: {lengths}")
-        #         num_variations = lengths[0]
-                
-        #         # Convert from {param_name: [values]} to list of {param_name: value} for each variation:
-        #         variations = []
-        #         for i in range(num_variations):
-        #             variations.append({param_name: sweep_dict[param_name][i] for param_name in sweep_dict.keys()})
-                    
-        #         return variations
-                
-        #     fixed_params = self.get_src_params() # current parameter values from underlying PCell
-            
-        #     # TODO: I haven't implented secondary row or column sweeps
-            
-        #     # TODO: Extract details like the label placement, and arrays of identical variants
-        #     # from existing cell in the layout.
-        #     # TODO: Create a menu action or a macro to use existing cells in the layout
-        #     # as the source for the sweep. (The existing cells have to contain PCells).
-            
-        #     # Remove the swept parameters from the fixed parameters dict
-        #     for key in self.parsed_row_sweep.keys():
-        #         fixed_params.pop(key) 
-        #     for key in self.parsed_col_sweep.keys():
-        #         fixed_params.pop(key)
-            
-        #     # generator of dicts of {param_name: value} for each variation in the row sweep
-        #     _row_sweep = dict_zip(self.parsed_row_sweep) 
-        #     _col_sweep = dict_zip(self.parsed_col_sweep) 
-            
-        #     return fixed_params, _row_sweep, _col_sweep
 
-            
-        def __copy_param(self, param_decl, default=None, name:str=None, type_code:int=None, description:str=None,
-                         hidden:bool=None, readonly:bool=None, unit:str=None, 
-                         max_value=None, min_value=None, choices=None):
-            '''
-            Helper function to copy a parameter declaration from the underlying PCell into this wrapper PCell, 
-            by defining a parameter with the same attributes in this wrapper PCell.
-            
-            If any of the kwargs are given, they override the corresponding attribute of the parameter declaration from the 
-            underlying PCell when the parameter is defined in this PCell.
-            
-            Also stores the parameter declarations of the underlying PCell in a dictionary 
-            *self.src_params* for easy access when generating the sweep.
-            '''
-            # For every paramter attribute: override if provided, otherwise use the value from param_decl
-                
-            if type_code is None:
-                type_code = param_decl.type
-            elif not is_valid_param_type(type_code):
-                raise ValueError(f'Invalid type code for Klayout PCell parameter: {type_code}. Must be one of '
-                                       ' pya.PCellParameterDeclaration.TypeInt, pya.PCellParameterDeclaration.TypeDouble,'
-                                       ' pya.PCellParameterDeclaration.TypeString, pya.PCellParameterDeclaration.TypeLayer, etc.')
-                
-            name      = param_decl.name if name is None else str(name)
-            describe  = param_decl.description if description is None else str(description)
-            default   = param_decl.default if default is None else get_converter(type_code)(default)
-            hidden    = param_decl.hidden if hidden is None else hidden in (True, 'True', 1, '1', 'yes')
-            readonly  = param_decl.readonly if readonly is None else readonly in (True, 'True', 1, '1', 'yes') 
-            unit      = param_decl.unit if unit is None else str(unit)
-            min_value = param_decl.min_value if min_value is None else min_value
-            max_value = param_decl.max_value if max_value is None else max_value
-            
-            if choices is None and len(param_decl.choice_values()) > 0:
-                choices = list(zip(param_decl.choice_descriptions(), param_decl.choice_values()))
-
-            # It will throw an error if you assign choices=None. Only assign the choices argument if you have a value for it.
-            if choices is not None:
-                self.param(name, type_code, describe, 
-                            default=default, hidden=hidden, readonly=readonly,
-                            unit=unit, max_value=max_value, min_value=min_value,
-                            choices=choices)
-            else:
-                self.param(name, type_code, describe, 
-                            default=default, hidden=hidden, readonly=readonly,
-                            unit=unit, max_value=max_value, min_value=min_value)
-                
-            # Store the parameter declarations of the underlying PCell in a 
-            # dictionary for easy access when generating the sweep:
-            self.src_params[param_decl.name] = param_decl
-            
-            # print(f'Copied param: {name} as type {PARAM_TYPES[type_code]} with default {default!r}')
-            # print(f'Current Value: {name} = {getattr(self, name)}')
-        
-        def _pcell_from_lib(self, source_pcell_name, lib_name):
-            '''Find the target PCell declaration in the given library.
-            Returns  (PCell declaration object, Library object).
-            Raises an exception if the library or PCell cannot be found.'''
-            # Find the library
-            lib = pya.Library.library_by_name(lib_name)
-            if not lib:
-                raise Exception(f"Library '{lib_name}' not found")
-            
-            # Search the library for source_pcell_name
-            pcell_decl = lib.layout().pcell_declaration(source_pcell_name)
-            if not pcell_decl:
-                raise Exception(f"PCell '{source_pcell_name}' not found in library '{lib_name}'")
-            
-            print(f"Found PCell declaration for '{source_pcell_name}' in library '{lib_name}'")
-            return pcell_decl, lib
-        
-        def _details_from_layout(self, source_pcell_name):
-            '''Find the existing cell in the currently active layout with the given name.
-            
-            Returns: dict of it's parameter values {param_name: value}, 
-            or raises an exception if the cell cannot be found or is not a PCell instance.
-            '''
-            # Search currently active layout for source_pcell_name
-            app = pya.Application.instance()
-            if not app:
-                raise Exception("No running instance of KLayout found.")
-            
-            mw = app.main_window()
-            if not mw:
-                raise Exception("No main window found in KLayout.")
-            
-            view = mw.current_view()
-            if not view:
-                raise Exception("No current view found in KLayout.")
-            
-            cv = view.active_cellview()
-            if not cv.is_valid():
-                raise Exception("No active cellview found in KLayout.")
-            
-            layout = cv.layout()
-            cell = layout.cell(source_pcell_name)
-            if not cell:
-                raise Exception(f"Cell '{source_pcell_name}' not found in currently active layout.")
-                    
-            if not cell.is_pcell_variant():
-                raise Exception(f"'{source_pcell_name}' is not a PCell instance.")
-            
-            print(f"Found PCell '{source_pcell_name}' in the currently active layout.")
-            
-            # Actual parameters values for this instance, to use as defaults in the wrapper PCell parameters:
-            return cell.pcell_parameters_by_name()
-        
         def _parse_sweep(self, sweep_spec):
             '''Parses either *_row_sweep* or *_col_sweep* into parameter name and list of values to sweep over.
             
@@ -1220,72 +871,5 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             
             # Successful parse!
             return values
-            
-        def _convert_to_type(self, value_str, param_type):
-            """Convert string to proper parameter type."""
-            convert_type = get_converter(param_type) # Function that converts a string to the correct type.
-            try:
-                convert_type(value_str)
-            except ValueError as e:
-                e.add_note(f'Error converting "{value_str}" to type {param_type}.')
-                raise
-        
-        def __get_pcell_decl(self):
-            '''
-            Finds the target PCell's declaration, using local variables source_pcell_name and lib_name 
-            from the enclosing function this PCell is defined in. *lib_name* is the name of the library 
-            containing the target pcell. If not given, will search the currently active layout for the 
-            an existing cell with the given target cell name.
-            '''
-            if lib_name: # Search the library for source_pcell_name
-                lib = pya.Library.library_by_name(lib_name)
-                if not lib:
-                    raise Exception(f"Library {lib_name} not found")
-            
-                pcell_decl = lib.layout().pcell_declaration(source_pcell_name)
-                if not pcell_decl:
-                    raise Exception(f"PCell {source_pcell_name} not found in Library {lib_name}")
-                
-            else: # Search currently active layout for source_pcell_name
-                existing_cell = self.layout.cell(self.cell_name)
-                    
-                if not existing_cell:
-                    raise Exception(f"Cell '{self.cell_name}' not found in currently active layout.")
 
-    return ParamSweep
-
-
-
-
-# If it had been possible to dynamically add parameters to the PCell class after discovering the underlying PCell's parameters, 
-# I would have done that instead of having the user go into scripting to define which PCells to wrap over:
-# All parameters must be defined in the __init__ of the PCell. 
-# So I have to define a new class for each underlying PCell I want to wrap over, which is not ideal.
-
-    # # Reference to the underlying PCell
-    # self.param("pcell_name", self.TypeString, "PCell to Array", default="HEMT")
-    # self.param("library_name", self.TypeString, "Library Name", default="MyLib")
-    # # To use existing, locally created cell instead:
-    # self.param("use_existing_cell", self.TypeBoolean, "Use Existing Cell", default=False)
-
-if __name__ == '__main__':
-    try:
-        import importlib
-        import sys
-        importlib.reload(sys.modules['pya_helpers'])
-        importlib.reload(sys.modules['general_helpers'])
-        from pya_helpers import get_converter
-    
-        # Usage:
-        ParamSweepHEMT = custom_sweep_pcell("HEMT", "MyLib")
-        convert = get_converter(ParamSweepHEMT.TypeInt)
-        print(convert('1'))
-        print(convert('2.00'))
-        print(repr(ParamSweepHEMT._parse_values_to_type(1, '1:20:5', ParamSweepHEMT.TypeInt)))
-
-        # # Register it
-        # lib = pya.Library.library_by_name("MyLib")
-        # lib.layout().register_pcell(f'HEMT_ParamSweep', ParamSweepHEMT())
-    except Exception as e:
-        print('ParamSweep error: ', traceback.format_exc())
-        # f'{LIB_NAME} loaded with PCells: {list(PCELLS.keys()).extend(['HEMT'])}'
+    return Sweep
