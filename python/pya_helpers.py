@@ -33,7 +33,8 @@ def move_box_to(box, lowerleft, pos='LL'):
 
 def create_text(text_string, height_um, dbu, pos=None, trans=None) -> pya.Region:
     """
-    Generate and return text as a Region containing polygons.
+    Generate and return text as a Region containing polygons or as a cell id.
+    TODO: Allow for multiline text. Currently, \n is interpreted as a wide space.
     
     Args:
    -    text_string: String to render
@@ -43,7 +44,7 @@ def create_text(text_string, height_um, dbu, pos=None, trans=None) -> pya.Region
    -    trans: pya.Trans object for arbitrary transformations
         """
     # TODO: Text height is not working correctly, it's always shorter than the specified height. Figure out why and fix it.
-
+    
     # Create text
     gen = pya.TextGenerator.default_generator()
     text_region = gen.text(text_string, dbu,
@@ -66,6 +67,44 @@ def create_text(text_string, height_um, dbu, pos=None, trans=None) -> pya.Region
     text_region.transform(pya.Trans(offset.x, offset.y))
       
     return text_region
+
+def text_pcell(text_string, height_um, layer, layout) -> pya.Cell:
+    """
+    Generate and return text as a TEXT PCell.
+    This automatically allows for multiline text.
+    
+    Args:
+   -    text_string: String to render
+   -    height_um: Text height in microns
+   -    layer: pya.LayerInfo, the layer to place the text on
+   -    layout: pya.Layout object to add the PCell to
+        """
+    # TODO: Text height is not working correctly, it's always shorter than the specified height. Figure out why and fix it.
+
+    basic_lib = pya.Library.library_by_name("Basic")
+    text_pcell_decl = basic_lib.layout().pcell_declaration("TEXT")
+
+    # Fetch the default font height from the generator engine
+    # (The nominal font height in drawing units is 32.0, so this returns 32.0 * dbu)
+    default_height = pya.TextGenerator.default_generator().dheight()
+
+    # 6. Define PCell parameters with the calculated magnification
+    param_dict = {
+        "text": text_string.replace('\n', r'\n'), # Convert the newlines to a literal format for use in the PCell
+        "layer": layer,
+        "mag": height_um / default_height
+    }
+
+    # Get TEXT PCell parameters as an ordered array of values, using defaults for any missing parameters
+    text_params = [param_dict.get(p.name, p.default) for p in text_pcell_decl.get_parameters()]
+    print("Text PCell parameters:")
+    print({p.name: text_params[i] for i, p in enumerate(text_pcell_decl.get_parameters())}) 
+
+    # Create the PCell variant and place it into the top cell
+    text_var_id = layout.add_pcell_variant(basic_lib, text_pcell_decl.id(), text_params)
+    
+    # Fetch and return the cell object
+    return layout.cell(text_var_id)
 
 def add_label(text_string, height_um, x_um, y_um, layout, cell, layer):
     """Add text label as polygon geometry

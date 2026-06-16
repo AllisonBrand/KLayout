@@ -254,6 +254,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     # Display errors as text geometry
                     self.display_error_geom(self.__errors)
                 except Exception:
+                    print(f"Error when displaying error geometry: \n{traceback.format_exc()}")
                     # Insert a default shape to prevent empty cell
                     self.cell.shapes(self.layout.layer(999, 0)).insert(pya.Box(0, 0, 100/dbu, 100/dbu)) # Layer 999 is for error geometry
 
@@ -669,23 +670,24 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             '''Come up with illustrative defaults for _row_sweep, _col_sweep, _format_str'''
             # We'll use the first suitable parameters from the source PCell
             # It's easier to guess valid sweep values if the parameter is a numeric type.
-            row_var = next((name for name in self.src_params if is_numeric_param_type(self.src_params[name].type)), '')
-            col_var = next((name for name in self.src_params if is_numeric_param_type(self.src_params[name].type)), '')
+            numeric_param_gen = (name for name in self.src_params if is_numeric_param_type(self.src_params[name].type))
+            row_var = next(numeric_param_gen, '')
+            col_var = next(numeric_param_gen, '')
             
             row_sweep = col_sweep = format_str = ''
             var = []
             
             if row_var:
                 values = np.array([1, 2, 3]) * self.src_params[row_var].default
-                row_sweep = f'{row_var}: {', '.join(map(str, values))}'
+                row_sweep = f"{row_var}: {', '.join(map(str, values))}"
                 
-                var.append('{row_var}')
+                var.append(f'{{{row_var}}}')
     
             if col_var:
                 default = self.src_params[col_var].default
                 col_sweep = f'{col_var}: {default}:{3*default}:{default}' # start:stop:step
                 
-                var.append('{col_var}')
+                var.append(f'{{{col_var}}}')
             
             format_str = ', '.join(var) or 'Label'
             
