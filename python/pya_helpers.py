@@ -100,7 +100,7 @@ def text_pcell(text_string, height_um, layer, layout) -> pya.Cell:
     print("Text PCell parameters:")
     print({p.name: text_params[i] for i, p in enumerate(text_pcell_decl.get_parameters())}) 
 
-    # Create the PCell variant and place it into the top cell
+    # Create the PCell variant and store it in a hidden sub-cell belonging to the layout
     text_var_id = layout.add_pcell_variant(basic_lib, text_pcell_decl.id(), text_params)
     
     # Fetch and return the cell object
