@@ -6,8 +6,8 @@
 !/pymacros/
 
 # Except for 
-python/__pycache__*
-*.pyc
+python/__pycache__/*
+**/*.pyc
 python/ParamSweep_old.py
 python/fix.py
 

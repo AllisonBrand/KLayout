@@ -9,7 +9,6 @@ import warnings
 # from string.templatelib import Interpolation, Template
 
 # TODO: Better-looking display for evaluated row, col, matrix expressions
-# TODO: Multiple copies of each variant
 
 from pya_helpers import create_text, get_bbox_point, as_point, get_converter, is_valid_param_type, is_numeric_param_type, PARAM_TYPES
 from general_helpers import parse_range, UserInputError, first_valid
@@ -69,10 +68,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
 
                 # Cache for detecting changes
                 self.__prev = None # TODO: actually use this?
-                
-                # TODO: Add nice defaults for _row_sweep and _col_sweep. Discovery of source param decls must happen first. 
-                # TODO:  Make ParamSweep a child class of Wrapper. Will help with ^^
-                
+                                
                 # I added "_" before every paramter name to reduce the risk that any underlying PCell params get overriden.
                 
                 self.wrapper_defaults = {'_row_pad': 100.0,
@@ -135,25 +131,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     
                 print(f"Copied parameters into '{source_pcell_name}_ParamSweep wrapper: {list(self.src_params.keys())}")   
                 print(f'{self._expr_param_types=}')
-                
-                # # ============= Duplicates Array ============= 
-                # self.param("__dup_header", self.TypeNone, " Duplicates Array ".center(32, '═')) # Just holds the section header in the GUI.
-                # self.param("__dup_desc", self.TypeNone, "WIDTH and HEIGHT are optional keywords that represent the dimensions "
-                #            "of one instance of the underlying PCELL once drawn.") # Holds descriptive text in the GUI.
-                
-                # # Parameters to define array of duplicates
-                # self.param("_n_rows_dup", self.TypeInt, "# of Rows for Duplicates Array", default=3)
-                # self.param("_n_cols_dup", self.TypeInt, "# of Columns for Duplicates Array", default=3)
-                # self.param("_row_space", self.TypeString, "Row Spacing (µm)", default="HEIGHT + 10")
-                # self.param("_col_space", self.TypeString, "Column Spacing (µm)", default="WIDTH + 10")
-                # self.param("_stagger", self.TypeString, "Stagger (µm), a Δx applied to every second row", default="0")
-                # # TODO: NEEDS VERSION numbers to avoid breaking existing HEMT ParamSweep!!
-
-                # # These param can accept expressions.
-                # # Record that they need to be evaluated to TypeDouble:
-                # for param_name in ('_row_space', '_col_space', '_stagger'):
-                #     self._expr_param_types[param_name] = self.TypeDouble
-                
                 
                 # ============= Messaging the user ============= 
                 self.param("_msg", self.TypeString, "Messages:", default="", readonly=True) # For errors and warnings
@@ -271,13 +248,8 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
 
                     col_pad = round( self.get_value('_col_pad', 0, i) / dbu )
                     # Update y_pos
-                    x_pos = max_x + col_pad
-                
+                    x_pos = max_x + col_pad    
 
-                #    TODO:   should be multiple copies, work on that later 
-    
-    
-                #         
                 print(f'produce_impl finished for {source_pcell_name}_ParamSweep at {datetime.now()}')
                 
             except Exception as e:
@@ -839,7 +811,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
 
             Returns the instance from self.cell.insert.'''
             dbu = self.layout.dbu
-            # TODO: Multiple copies! 
             # TODO: Make it possible to use an existing cell instance in the layout,
             # using *change_pcell_parameters* creating new instances through add_pcell_variant,
             # to preserve any manual edits to the cell instance.

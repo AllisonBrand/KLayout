@@ -182,11 +182,13 @@ class Wrapper(pya.PCellDeclarationHelper):
         print(f"Found PCell declaration for '{source_pcell_name}' in library '{lib_name}'")
         return pcell_decl, lib
     
-    def display_error_geom(self):
-            ''' Generate text geometry showing the content of self.__errors'''
+    def display_error_geom(self, errors):
+            ''' Generate text geometry showing the errors.
+            errors: list of error objects'''
             # Written by Claude-4-5-sonnet, with minor modifications
             
-            error_text = "ERRORS:\n  • " + "\n  • ".join(map(str, self.__errors))
+            # Show errors as text in the layout
+            error_text = "ERRORS:\n  • " + "\n  • ".join(map(str, errors))
         
             text_region = create_text(
                 error_text,
@@ -198,11 +200,12 @@ class Wrapper(pya.PCellDeclarationHelper):
             error_layer = self.layout.layer(999, 0)
             self.cell.shapes(error_layer).insert(text_region)
             
+            # Print the errors to the console
             print(f"\n{'='*50}")
             print("PCELL PARAMETER ERRORS:")
-            print("ERRORS:\n" + "\n\n".join(
+            print("ERRORS:\n" + "\n\n".join( # Each traceback is separated by '\n\n'
                   map(lambda err: ''.join(traceback.format_exception(err)),
-                      self.__errors)))
+                      errors)))
             print(f"{'='*50}\n")
 
     def insert_instance(self, params=None, trans:pya.Trans=None):

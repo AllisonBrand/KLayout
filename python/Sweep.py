@@ -51,22 +51,25 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 
                 # I added "_" before every parameter name belonging to the wrapper PCell to reduce the risk that any underlying PCell params get overriden.
                                 
-                self.wrapper_defaults = {'_row_pad': 100.0,
-                                         '_col_pad': 100.0,
-                                         '_label_height': 30.0}
+                self.safe_defaults = {'_row_pad': 100.0,
+                                      '_col_pad': 100.0,
+                                      '_label_height': 30.0}
+                
+                # Use source parameters come up with illustrative defaults for _row_sweep, _col_sweep, _format_str:
+                row_sweep, col_sweep, format_str = self._illustrative_defaults()
                 
                 # Sweep Array Configuration 
                 self.param("__sweep_header", self.TypeNone, " Sweep Configuration ".center(32, '═')) # Just holds the section header in the GUI.
-                self.param("_row_sweep", self.TypeString, "Define Row Sweep", default='') # sep_GD: 1, 2, 3
-                self.param("_col_sweep", self.TypeString, "Define Col Sweep", default='') # gate_len: 0.5, 1, 2
-                self.param("_row_pad", self.TypeString, "Row Padding (µm)", default    = str(self.wrapper_defaults['_row_pad']))
-                self.param("_col_pad", self.TypeString, "Column Padding (µm)", default = str(self.wrapper_defaults['_col_pad']))
+                self.param("_row_sweep", self.TypeString, "Define Row Sweep", default=row_sweep) # sep_GD: 1, 2, 3
+                self.param("_col_sweep", self.TypeString, "Define Col Sweep", default=col_sweep) # gate_len: 0.5, 1, 2
+                self.param("_row_pad", self.TypeString, "Row Padding (µm)", default    = str(self.safe_defaults['_row_pad']))
+                self.param("_col_pad", self.TypeString, "Column Padding (µm)", default = str(self.safe_defaults['_col_pad']))
 
                 # Labeling
                 self.param("__label_header", self.TypeNone, " Labeling ".center(32, '═')) # Just holds the section header in the GUI.
-                self.param("_format_str", self.TypeString, "Label Format", default="Label Here") # TODO: Good defaults: GS:{sep_SG}, G:{gate_len}, GD:{sep_GD}
+                self.param("_format_str", self.TypeString, "Label Format", default=format_str) 
                 self.param("_l_label", self.TypeLayer, "Label Text Layer", default=pya.LayerInfo(1, 0))
-                self.param("_label_height", self.TypeString, "Label Height (µm)", default = str(self.wrapper_defaults['_label_height']))
+                self.param("_label_height", self.TypeString, "Label Height (µm)", default = str(self.safe_defaults['_label_height']))
                 self.param("_label_rot", self.TypeInt, "Label Rotation", default=0, choices=[('0°', 0), ('90°', 1),  ('180°', 2), ('270°', 3)])
                 self.param("_label_x", self.TypeString, "Label X Offset (µm)", default='0.0')
                 self.param("_label_y", self.TypeString, "Label Y Offset (µm)", default='0.0')
@@ -82,6 +85,27 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 # Underlying PCell parameters 
                 self.expose_src_params()
                 
+                # ============= Duplicates Array ============= 
+                self.param("__dup_header", self.TypeNone, " Duplicates Array ".center(32, '═')) # Just holds the section header in the GUI.
+                # self.param("__dup_desc", self.TypeNone, "WIDTH and HEIGHT are optional keywords that represent the dimensions "
+                #            "of one instance of the underlying PCELL once drawn.") # Holds descriptive text in the GUI.
+                
+                # TODO: Allow different numbers for rows and columns in the duplicates array across variants
+                
+                # Parameters to define array of duplicates
+                self.param("_n_rows_dup", self.TypeInt, "# of Rows for Duplicates Array", default=3) 
+                self.param("_n_cols_dup", self.TypeInt, "# of Columns for Duplicates Array", default=3)
+                self.param("_row_pad_dup", self.TypeString, "Row Pad (µm), may be negative", default="10")
+                self.param("_col_pad_dup", self.TypeString, "Column Pad (µm), may be negative", default="10")
+                self.param("_stagger", self.TypeString, "Stagger (µm), a Δx applied to every second row", default="0")
+            
+                # These param can accept expressions.
+                # Record that they need to be evaluated to TypeDouble:
+                for param_name in ('_row_pad_dup', '_col_pad_dup', '_stagger'):
+                    self._expr_param_types[param_name] = self.TypeDouble
+                    
+                
+                # For Debugging:
                 # Expression parameters are currently supported for numerical types that 
                 # are not set with a drop down menu.
                 # At this point, self._expr_param_types should contain the name and desired type 
@@ -90,6 +114,10 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 
                 # Messaging the user 
                 self.param("_msg", self.TypeString, "Messages:", default="", readonly=True) # For errors and warnings
+                
+                # TODO: USE VERSION numbers to avoid breaking existing layouts!!
+                # Version:
+                self.param("_version", self.TypeString, "Version:", default="1.0.0", readonly=True, hidden=True) # Aids with backwards compatibility
                 
                 # Finished!
                 print(f'Initialized an instance of {source_pcell_name}_Sweep() at {datetime.now()}')
@@ -127,6 +155,10 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 # Check if the label _format_str references valid parameters 
                 # from the underlying PCell, and raise ValueError if it doesn't.
                 self.validate_label_fstring()
+                
+                # Ensure that the number of rows and columns in the duplicates array are each >= 1:
+                self._n_rows_dup = max(1, self._n_rows_dup)
+                self._n_cols_dup = max(1, self._n_cols_dup)
 
             except Exception as e:
                 self.__errors.append(e)
@@ -191,7 +223,12 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                                     align='UL',
                                     label_offset = as_point((self.get_value('_label_x', j, i), 
                                                              self.get_value('_label_y', j, i)), scale_unit=dbu),
-                                    text_height = self.get_value('_label_height', j, i))
+                                    text_height = self.get_value('_label_height', j, i),
+                                    rows = self._n_rows_dup, # For array of duplicates
+                                    cols = self._n_cols_dup,
+                                    row_pad = self.get_value('_row_pad_dup', j, i),
+                                    col_pad = self.get_value('_col_pad_dup', j, i),
+                                    stagger = self.get_value('_stagger', j, i))
                         
                         row_pad = round( self.get_value('_row_pad', j, 0) / dbu )                       
                         # Update y_pos and x_pos based on the bbox:
@@ -204,11 +241,6 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     # Update y_pos
                     x_pos = max_x + col_pad
                 
-
-                #    TODO:   should be multiple copies, work on that later 
-    
-    
-                #         
                 print(f'produce_impl finished for {source_pcell_name}_ParamSweep at {datetime.now()}')
                 
             except Exception as e:
@@ -220,7 +252,7 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                  
                 try:
                     # Display errors as text geometry
-                    self.display_error_geom()
+                    self.display_error_geom(self.__errors)
                 except Exception:
                     # Insert a default shape to prevent empty cell
                     self.cell.shapes(self.layout.layer(999, 0)).insert(pya.Box(0, 0, 100/dbu, 100/dbu)) # Layer 999 is for error geometry
@@ -381,19 +413,19 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             self.evaluated_params['_row_pad'] = row_pad = np.asarray(self.evaluated_params['_row_pad'])
             self.evaluated_params['_col_pad'] = col_pad = np.asarray(self.evaluated_params['_col_pad'])
             
-             # Check if row pad is either scalar or depends only on the row sweep.
+             # Make sure that row pad is either scalar or depends only on the row sweep.
             if row_pad.size != 1 and row_pad.shape != (self.n_rows, 1):
                     # Set row pad to a valid scalar instead
-                    row_pad = first_valid(self.get_value('_row_pad'), self.wrapper_defaults['_row_pad'])
+                    row_pad = first_valid(self.get_value('_row_pad'), self.safe_defaults['_row_pad'])
                     self.evaluated_params['_row_pad'] = np.asarray(row_pad)
                     setattr(self, '_row_pad', str(row_pad)) # Reset in GUI too.
                     self.__warnings.append("Row Pad must be either scalar or be the same shape as row sweep. "
                                             f"Reseting to {row_pad} um.")
               
-            # Check if col pad is either scalar or depends only on the col sweep.      
+            # Make sure that col pad is either scalar or depends only on the col sweep.      
             if col_pad.size != 1 and col_pad.shape != (1, self.n_cols):
                     # Set col pad to a valid scalar instead
-                    col_pad = first_valid(self.get_value('_col_pad'), self.wrapper_defaults['_col_pad'])
+                    col_pad = first_valid(self.get_value('_col_pad'), self.safe_defaults['_col_pad'])
                     self.evaluated_params['_col_pad'] = np.asarray(col_pad)
                     setattr(self, '_row_pad', str(row_pad)) # Reset in GUI too.
                     self.__warnings.append("Col Pad must be either scalar or be the same shape as col sweep. "
@@ -633,6 +665,32 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                 
             return expr
         
+        def _illustrative_defaults(self):
+            '''Come up with illustrative defaults for _row_sweep, _col_sweep, _format_str'''
+            # We'll use the first suitable parameters from the source PCell
+            # It's easier to guess valid sweep values if the parameter is a numeric type.
+            row_var = next((name for name in self.src_params if is_numeric_param_type(self.src_params[name].type)), '')
+            col_var = next((name for name in self.src_params if is_numeric_param_type(self.src_params[name].type)), '')
+            
+            row_sweep = col_sweep = format_str = ''
+            var = []
+            
+            if row_var:
+                values = np.array([1, 2, 3]) * self.src_params[row_var].default
+                row_sweep = f'{row_var}: {', '.join(map(str, values))}'
+                
+                var.append('{row_var}')
+    
+            if col_var:
+                default = self.src_params[col_var].default
+                col_sweep = f'{col_var}: {default}:{3*default}:{default}' # start:stop:step
+                
+                var.append('{col_var}')
+            
+            format_str = ', '.join(var) or 'Label'
+            
+            return row_sweep, col_sweep, format_str
+
         def params_at_index(self, row:int, col:int):
             '''Returns dict of all the params for this index as {param_name: value}'''            
             params = {}
@@ -699,15 +757,55 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
                     )        
             return value
         
-        def insert_labeled_variant(self, params, trans=pya.Trans(0, 0), align=None, label_offset=None, text_height=None):
-            '''Inserts an labeled variant of the underlying PCell with the given parameters.
+        def insert_labeled_variant(self, params, trans=pya.Trans(0, 0), align=None, label_offset=None, text_height=None,
+                                   rows=None, cols=None, row_pad=None, col_pad=None, stagger=None):
+            '''Inserts a labeled array of duplicates for a variant of the underlying PCell with the given parameters.
 
 -           trans: pya.Trans If given, the transformation is applied after alignment
 -           align: 'UR', 'UL', 'BR', 'BL', or 'C'. If given, aligns the specified corner of the instance's bbox to the origin.
 -           label_offset: pya.Point or pya.Vector or (x, y) tuple. If given, used to offset the label position from the anchor position specified by *self._label_anchor*.
 
             Returns the instance from self.cell.insert.'''
-            # TODO: Multiple copies! 
+            def insert_dup_array(labeled_variant, params):
+                '''Inserts an array of duplicate cells for the variant described by params'''
+                variant_cell = self.create_variant(params) # Creates variant of underlying PCell as a cell in the main layout:
+
+                # Parameters for the duplicate array
+                dbu = self.layout.dbu
+                nonlocal rows, cols, row_pad, col_pad, stagger
+                
+                rows = self._n_rows_dup if rows is None else rows
+                cols = self._n_cols_dup if cols is None else cols
+                height = variant_cell.bbox().height()
+                width = variant_cell.bbox().width()
+                row_pad = (self.get_value('_row_pad_dup') if row_pad is None else row_pad) / dbu
+                col_pad = (self.get_value('_col_pad_dup') if col_pad is None else col_pad) / dbu
+                row_disp = -(height + row_pad)
+                col_disp = width + col_pad
+                stagger = (self.get_value('_stagger') if stagger is None else stagger) / dbu
+                
+                # Insert the variant cells for each row:
+                for r in range(rows): # 0, 1, ..., n_rows-1
+                    # Shift every second row by stagger
+                    shift_x = stagger if r % 2 != 0 else 0
+                    
+                    # This places one row
+                    labeled_variant.insert(pya.CellInstArray(variant_cell, pya.Trans(shift_x, r*row_disp),
+                                                            pya.Vector(0, 0),
+                                                            pya.Vector(col_disp, 0),
+                                                            1, 
+                                                            cols))
+                    
+            def add_label(labeled_variant, params):
+                '''Add a label to the duplicates array in the cell labeled_variant.'''
+                nonlocal label_offset, text_height
+                label_offset = pya.Vector(0, 0) if label_offset is None else pya.Vector(as_point(label_offset))
+                label_anchor = get_bbox_point(self._label_anchor, labeled_variant.bbox())
+                text_center = label_anchor + label_offset
+                text_height = self.get_value('_label_height') if text_height is None else text_height
+                label = self.create_label(params, text_center, text_height)
+                labeled_variant.shapes(self._l_label_layer).insert(label)
+            
             # TODO: Make it possible to use an existing cell instance in the layout,
             # using *change_pcell_parameters* creating new instances through add_pcell_variant,
             # to preserve any manual edits to the cell instance.
@@ -715,17 +813,11 @@ def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=Fa
             # Cell container for the label and the PCell variant
             labeled_variant = self.layout.create_cell(f"Labeled_{source_pcell_name}_Variant")
             
-            # Add the variant cell
-            variant_cell = self.create_variant(params) # Creates variant of underlying PCell as a cell in the main layout:
-            labeled_variant.insert(pya.CellInstArray(variant_cell, pya.Trans(0, 0)))
+            # Add an array of duplicants for the variant cell
+            insert_dup_array(labeled_variant, params)
                         
             # Add label for the variant
-            label_offset = pya.Vector(0, 0) if label_offset is None else pya.Vector(as_point(label_offset))
-            label_anchor = get_bbox_point(self._label_anchor, labeled_variant.bbox())
-            text_center = label_anchor + label_offset
-            text_height = self.get_value('_label_height') if text_height is None else text_height
-            label = self.create_label(params, text_center, text_height)
-            labeled_variant.shapes(self._l_label_layer).insert(label)
+            add_label(labeled_variant, params)
             
             if align:            
                 anchor = pya.Vector(get_bbox_point(align, labeled_variant.bbox()))
