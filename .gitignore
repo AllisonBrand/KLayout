@@ -4,6 +4,8 @@
 # 2. Re-include the two specific directories
 !/python/
 !/pymacros/
+# And the README file:
+!README.md
 
 # Except for 
 python/__pycache__/*
