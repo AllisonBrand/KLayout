@@ -1,18 +1,20 @@
 # 1. Ignore everything
 /*
 
-# 2. Re-include the two specific directories
+# 2. Re-include a selection:
+# two specific directories
 !/python/
 !/pymacros/
 # And the README file:
 !README.md
-
-# Except for 
-python/__pycache__/*
-**/*.pyc
-python/ParamSweep_old.py
-python/fix.py
-
-# 3. Re-include the .gitignore file itself (optional but recommended)
 !.gitignore
 !.gitattributes
+# Used to push only the production files to main branch from dev branch
+!publish.sh
+# Feature ideas:
+!plan.md
+
+# Except for 
+**/__pycache__/*
+**/*.pyc
+python/testing/ParamSweep_old.py

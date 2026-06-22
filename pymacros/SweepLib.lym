@@ -21,28 +21,26 @@ import sys
 import traceback
 
 from helpers.dev_reload import reload_modules
-import testing.ParamSweep as ParamSweep
 import Sweep
 
 
 # Configuration
-LIB_NAME = "MyLib"
+LIB_NAME = "SweepLib"
 PCELLS = {
 # 'python module name' : 'pcell class name'
   'testing.HEMT': 'HEMT',
-  'testing.parr_text': 'ParrText',
-  'testing.HEMT_Array': 'HEMT_Array',
   'testing.CircularHEMT': 'CircularHEMT'
 }
 
-OTHER_MODULES = ['testing.ParamSweep', 'Sweep', 'helpers.pya_helpers', 'helpers.general_helpers']
+OTHER_MODULES = ['Sweep', 'helpers.pya_helpers', 'helpers.general_helpers']
 
 class MyLib(pya.Library):
     def __init__(self):
         try:
-          self.description = "My First Library"
+          self.description = "Library for parameter sweep PCells"
           
-          # Remove old library
+          # Clear cached libary and reload the python modules.
+          # Remove old library, if it exists.
           old_lib = pya.Library.library_by_name(LIB_NAME)
           if old_lib:
               old_lib.delete()
@@ -53,7 +51,6 @@ class MyLib(pya.Library):
           
           # Reload the python modules for each PCell
           py_modules = reload_modules(PCELLS.keys())
-          
           
           # Register the pcells with MyLib
           for module_name, pcell_name in PCELLS.items():
@@ -71,14 +68,11 @@ pcells = [v for k, v in PCELLS.items()]
 
 # Use wrapper PCell ParamSweep:
 try: 
-  sweep_HEMT_Array = ParamSweep.custom_sweep_pcell('HEMT_Array', LIB_NAME)
-  print('Attempting to register HEMT_Array_ParamSweep with MyLib:')
-  lib.layout().register_pcell('HEMT_Array_ParamSweep', sweep_HEMT_Array())
-  pcells.extend(["HEMT_Array_ParamSweep"])
-  
+  sweep_HEMT = Sweep.custom_sweep_pcell('HEMT', LIB_NAME)
+  lib.layout().register_pcell('HEMT_ParamSweep', sweep_HEMT())
+  pcells.extend(["HEMT_ParamSweep"])
   
   sweep_CircularHEMT = Sweep.custom_sweep_pcell('CircularHEMT', LIB_NAME)
-  print('Attempting to register CircularHEMT_ParamSweep with MyLib:')
   lib.layout().register_pcell('CircularHEMT_ParamSweep', sweep_CircularHEMT())
   pcells.extend(["CircularHEMT_ParamSweep"])
   
@@ -87,9 +81,5 @@ except Exception as e:
 
 
 print(f'{LIB_NAME} loaded with PCells: {pcells}')
-    
-# from HEMT import HEMT
-# from RightTriangle import RightTriangle
-# from pcell_sample_python import Circle
     </text>
 </klayout-macro>

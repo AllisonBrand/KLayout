@@ -1,10 +1,10 @@
 import pya
-from pya_helpers import move_box_to, create_text, add_label
+from helpers.pya_helpers import move_box_to, create_text, add_label
 from datetime import datetime
 import traceback
 import numpy as np
 
-from general_helpers import parse_range
+from helpers.general_helpers import parse_range
   
 
 class ParrText(pya.PCellDeclarationHelper):

@@ -2,7 +2,7 @@ import pya
 from datetime import datetime
 import traceback
 
-from HEMT import HEMT
+from testing.HEMT import HEMT
 
 class HEMT_Array(HEMT):
     

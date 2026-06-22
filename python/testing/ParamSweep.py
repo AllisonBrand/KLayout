@@ -10,9 +10,9 @@ import warnings
 
 # TODO: Better-looking display for evaluated row, col, matrix expressions
 
-from pya_helpers import create_text, get_bbox_point, as_point, get_converter, is_valid_param_type, is_numeric_param_type, PARAM_TYPES
-from general_helpers import parse_range, UserInputError, first_valid
-from DependencyGraph import DependencyGraph
+from helpers.pya_helpers import create_text, get_bbox_point, as_point, get_converter, is_valid_param_type, is_numeric_param_type, PARAM_TYPES
+from helpers.general_helpers import parse_range, UserInputError, first_valid
+from helpers.DependencyGraph import DependencyGraph
     
 def custom_sweep_pcell(source_pcell_name:str, lib_name:str, use_existing:bool=False) -> pya.PCellDeclarationHelper:
     '''Defines a custom PCell that wraps the given target PCell. The custom PCell helps the user create a parametric 
@@ -1245,7 +1245,7 @@ if __name__ == '__main__':
         import sys
         importlib.reload(sys.modules['pya_helpers'])
         importlib.reload(sys.modules['general_helpers'])
-        from pya_helpers import get_converter
+        from helpers.pya_helpers import get_converter
     
         # Usage:
         ParamSweepHEMT = custom_sweep_pcell("HEMT", "MyLib")
