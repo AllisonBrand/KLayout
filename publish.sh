@@ -10,7 +10,8 @@ DEV_BRANCH="dev"
 PRODUCTION_FILES=(
     "README.md"
     ".gitignore"
-    "pymacros/SweepLib.lym"
+    # SweepLib is the same as MyLib, but only loads a few example cases into the library, rather than everything in the dev branch
+    "pymacros/SweepLib.lym" 
     "python/helpers/"
     "python/Wrapper.py"
     "python/Sweep.py"

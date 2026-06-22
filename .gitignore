@@ -10,6 +10,8 @@
 !.gitignore
 !.gitattributes
 # Used to push only the production files to main branch from dev branch
+!publish.ps1
+!publish.bat
 !publish.sh
 # Feature ideas:
 !plan.md
