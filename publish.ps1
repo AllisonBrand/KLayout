@@ -12,6 +12,7 @@ $DEV_BRANCH = "dev"
 $PRODUCTION_FILES = @(
     "README.md"
     ".gitignore"
+    ".gitattributes"
     # SweepLib is the same as MyLib, but only loads a few example cases into the library, rather than everything in the dev branch
     "pymacros/SweepLib.lym" 
     "python/helpers/*"
@@ -35,7 +36,7 @@ Write-Host "Starting selective publish process..." -ForegroundColor Cyan
 # Create a unique path for the hidden background folder
 $TEMP_DIR = Join-Path $env:TEMP "klayout_main_worktree_$(Get-Random)"
 
-# Extract the 'main' branch into that hidden folder
+# Extract the 'main' branch into the hidden folder $TEMP_DIR
 Write-Host "Creating hidden temporary worktree..." -ForegroundColor Cyan
 git worktree add $TEMP_DIR $MAIN_BRANCH
 if ($LASTEXITCODE -ne 0) {
@@ -46,6 +47,10 @@ if ($LASTEXITCODE -ne 0) {
 try{
     # Jump context into the hidden worktree folder to commit and push
     Push-Location $TEMP_DIR
+
+    # Clear out all old files from the main branch inside the sandbox.
+    # This ensures files removed from your production list register as deletions.
+    Get-ChildItem -Path $TEMP_DIR -Exclude ".git" | Remove-Item -Recurse -Force
 
     # Pull only the production files directly from the dev branch
     Write-Host "Pulling clean production files from '$DEV_BRANCH'..." -ForegroundColor Cyan
