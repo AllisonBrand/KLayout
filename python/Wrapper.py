@@ -2,7 +2,7 @@ import pya
 from datetime import datetime
 import traceback
 
-from pya_helpers import create_text, text_pcell, get_converter, is_valid_param_type
+from helpers.pya_helpers import create_text, text_pcell, get_converter, is_valid_param_type
     
 class Wrapper(pya.PCellDeclarationHelper):
     """
