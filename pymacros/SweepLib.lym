@@ -16,70 +16,44 @@
  <interpreter>python</interpreter>
  <dsl-interpreter-name/>
  <text>import pya
-import importlib
-import sys
 import traceback
 
-from helpers.dev_reload import reload_modules
 import Sweep
 
+# Example PCells to sweep:
+#    Will be added to SweepLib.
+#    PCells do not need to be defined in any particular library to be wrapped, 
+#    defining them here is just convenient for this example.
+from testing.HEMT import HEMT
+from testing.CircularHEMT import CircularHEMT
 
-# Configuration
-LIB_NAME = "SweepLib"
-PCELLS = {
-# 'python module name' : 'pcell class name'
-  'testing.HEMT': 'HEMT',
-  'testing.CircularHEMT': 'CircularHEMT'
-}
-
-OTHER_MODULES = ['Sweep', 'helpers.pya_helpers', 'helpers.general_helpers']
-
-class MyLib(pya.Library):
+class SweepLib(pya.Library):
     def __init__(self):
         try:
           self.description = "Library for parameter sweep PCells"
-          
-          # Clear cached libary and reload the python modules.
-          # Remove old library, if it exists.
-          old_lib = pya.Library.library_by_name(LIB_NAME)
-          if old_lib:
-              old_lib.delete()
-              print(f"Deleted old library: {LIB_NAME}")
-          
-          # Reload python module dependencies:
-          reload_modules(OTHER_MODULES)
-          
-          # Reload the python modules for each PCell
-          py_modules = reload_modules(PCELLS.keys())
-          
-          # Register the pcells with MyLib
-          for module_name, pcell_name in PCELLS.items():
-              cls = getattr(py_modules[module_name], pcell_name)
-              self.layout().register_pcell(pcell_name, cls()) 
-          
-          self.register(LIB_NAME) # If a library with that name already existed, it will be replaced now.
+          self.layout().register_pcell('HEMT',         HEMT()) 
+          self.layout().register_pcell('CircularHEMT', CircularHEMT()) 
+          self.register('SweepLib') # If a library with that name already existed, it will be replaced now.
         except Exception as e:
-          print(f'{LIB_NAME} __init__ error: \n{traceback.format_exc()}') 
+          print(f'SweepLib __init__ error: \n{traceback.format_exc()}') 
 
 
-# Recreate library
-lib = MyLib()
-pcells = [v for k, v in PCELLS.items()]
+# Create library
+lib = SweepLib()
 
-# Use wrapper PCell ParamSweep:
+# Use wrapper PCell Sweep:
+src_lib_name = "SweepLib" # Library where the PCell to wrap is defined.
 try: 
-  sweep_HEMT = Sweep.custom_sweep_pcell('HEMT', LIB_NAME)
+  sweep_HEMT = Sweep.custom_sweep_pcell('HEMT', src_lib_name)
   lib.layout().register_pcell('HEMT_ParamSweep', sweep_HEMT())
-  pcells.extend(["HEMT_ParamSweep"])
   
-  sweep_CircularHEMT = Sweep.custom_sweep_pcell('CircularHEMT', LIB_NAME)
+  sweep_CircularHEMT = Sweep.custom_sweep_pcell('CircularHEMT', src_lib_name)
   lib.layout().register_pcell('CircularHEMT_ParamSweep', sweep_CircularHEMT())
-  pcells.extend(["CircularHEMT_ParamSweep"])
   
 except Exception as e:
   print(f'custom_sweep_pcell error: \n{traceback.format_exc()}')
 
+# Now we have a library SweepLib containing HEMT_ParamSweep, CircularHEMT_ParamSweep, HEMT, and CircularHEMT!
 
-print(f'{LIB_NAME} loaded with PCells: {pcells}')
     </text>
 </klayout-macro>

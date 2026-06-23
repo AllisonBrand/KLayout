@@ -1,4 +1,5 @@
-# Written by Gemini
+# Written by Gemini with back-and-forth review and iterations
+# Used to push only the production files to main branch from dev branch
 
 # Run with:
 # publish.bat "Your commit message"
