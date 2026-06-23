@@ -1,6 +1,8 @@
 **This is a tool in Klayout scripting that can generate a parameter sweep PCell for any test structure that’s defined as a PCell.  This custom PCell lets the user create a parametric sweep as an array of labeled variations in the .gds file.**
 The parameter sweep PCell exposes the parameters of the underlying PCell in its GUI window, and it made to have an intuitive UI. 
 
+Users can define a row sweep and a column sweep. Numeric parameters can be defined as expressions of other parameters. This makes it possible to, for instance, define a sweep of gate-drain separation for a HEMT or FET structure, and then have the gate-source separation be a fixed fraction of that. Every variant of the pcell parameters is given a label with text geometry, which can be customized with syntax like "GD spacing: {GD_spacing}", where `GD_spacing` is a parameter name. The user can specify an array of duplicates for each labeled variant. 
+
 # Usage:
 Once you have the .lym file set up, it only requires two additional lines of code to create a parameter sweep PCell from an existing PCell!
 
